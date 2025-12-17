@@ -1,0 +1,279 @@
+"""
+ComposeWithLLM - FL Studio Piano Roll Script for MCP Integration
+
+This script enables AI assistants to control FL Studio's piano roll by:
+1. Reading note requests from mcp_request.json
+2. Adding/deleting/clearing notes in the piano roll
+3. Exporting the current state to piano_roll_state.json
+
+Trigger: Cmd+Opt+Y (macOS) or Ctrl+Alt+Y (Windows)
+
+Based on work from https://github.com/calvinw/fl-studio-mcp
+"""
+
+import flpianoroll as flp
+import json
+import os
+
+
+def get_script_dir():
+    """Get the directory where this script is located"""
+    return os.path.expanduser("~/Documents/Image-Line/FL Studio/Settings/Piano roll scripts")
+
+
+REQUEST_FILE = os.path.join(get_script_dir(), "mcp_request.json")
+RESPONSE_FILE = os.path.join(get_script_dir(), "mcp_response.json")
+STATE_FILE = os.path.join(get_script_dir(), "piano_roll_state.json")
+
+
+def export_piano_roll_state():
+    """Export current piano roll state to JSON file"""
+    notes_data = []
+    ppq = flp.score.PPQ
+
+    # Collect all notes
+    for i in range(flp.score.noteCount):
+        note = flp.score.getNote(i)
+        notes_data.append({
+            "number": note.number,
+            "midi": note.number,  # Alias for convenience
+            "time": note.time / ppq if ppq > 0 else 0,  # Convert to quarter notes
+            "time_ticks": note.time,
+            "duration": note.length / ppq if ppq > 0 else 0,  # Convert to quarter notes
+            "length_ticks": note.length,
+            "velocity": note.velocity,
+            "pan": note.pan,
+            "color": note.color,
+            "fcut": note.fcut,
+            "fres": note.fres,
+            "slide": note.slide,
+            "porta": note.porta,
+            "pitchofs": note.pitchofs,
+            "selected": note.selected,
+            "muted": note.muted,
+        })
+
+    # Export metadata
+    export_data = {
+        "ppq": ppq,
+        "noteCount": flp.score.noteCount,
+        "notes": notes_data
+    }
+
+    # Save to file
+    with open(STATE_FILE, 'w') as f:
+        json.dump(export_data, f, indent=2)
+
+    return STATE_FILE
+
+
+def process_mcp_request():
+    """Check for and process all requests from the MCP server"""
+    if not os.path.exists(REQUEST_FILE):
+        return None
+
+    try:
+        with open(REQUEST_FILE, 'r') as f:
+            content = json.load(f)
+
+        # Handle both single request (old format) and list of requests (new format)
+        if isinstance(content, list):
+            requests = content
+        elif isinstance(content, dict) and content.get("action"):
+            requests = [content]
+        else:
+            # Empty or invalid
+            return None
+
+        if not requests:
+            return None
+
+        # Process all requests in order
+        total_notes = 0
+        notes_deleted = 0
+
+        for request in requests:
+            action = request.get("action")
+
+            if action == "clear":
+                # Clear all notes
+                count = flp.score.noteCount
+                for i in range(count - 1, -1, -1):
+                    flp.score.deleteNote(i)
+                notes_deleted += count
+            elif action == "delete_notes":
+                result = delete_notes_from_piano_roll(request)
+                if result and result.get("status") == "success":
+                    notes_deleted += result.get("notes_deleted", 0)
+            elif action == "add_chord":
+                result = add_chord_to_piano_roll(request)
+                if result and result.get("status") == "success":
+                    total_notes += result.get("notes_added", 0)
+            elif action == "add_notes":
+                result = add_notes_to_piano_roll(request)
+                if result and result.get("status") == "success":
+                    total_notes += result.get("notes_added", 0)
+
+        # Clear the request queue after processing
+        with open(REQUEST_FILE, 'w') as f:
+            f.write("[]")
+
+        return {
+            "status": "success",
+            "requests_processed": len(requests),
+            "notes_added": total_notes,
+            "notes_deleted": notes_deleted
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def add_chord_to_piano_roll(request):
+    """Add a chord's notes to the piano roll from MCP request.
+
+    Chord format allows setting a base time and duration for all notes,
+    with optional per-note offsets and durations.
+
+    Request format:
+    {
+        "action": "add_chord",
+        "time": 0,           # Base time in quarter notes
+        "duration": 1.0,     # Default duration for all notes
+        "notes": [
+            {"midi": 60},                    # Uses base time and duration
+            {"midi": 64, "offset": 0.5},     # Starts 0.5 beats after base time
+            {"midi": 67, "duration": 2.0},   # Custom duration
+        ]
+    }
+    """
+    try:
+        notes = request.get("notes", [])
+        ppq = flp.score.PPQ
+        chord_time = request.get("time", 0)
+        current_time = int(ppq * chord_time)
+        duration_multiplier = request.get("duration", 1.0)
+
+        for note_data in notes:
+            midi_note = flp.Note()
+            midi_note.number = note_data["midi"]
+            midi_note.time = current_time + int(ppq * note_data.get("offset", 0))
+            note_duration = note_data.get("duration", duration_multiplier)
+            midi_note.length = int(ppq * note_duration)
+            midi_note.velocity = note_data.get("velocity", 0.8)
+            flp.score.addNote(midi_note)
+
+        return {
+            "status": "success",
+            "notes_added": len(notes)
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def delete_notes_from_piano_roll(request):
+    """Delete specific notes from the piano roll.
+
+    Request format:
+    {
+        "action": "delete_notes",
+        "notes": [
+            {"midi": 60, "time": 0},
+            {"midi": 64, "time": 0},
+        ]
+    }
+    """
+    try:
+        notes_to_delete = request.get("notes", [])
+        ppq = flp.score.PPQ
+        deleted_count = 0
+
+        # Convert delete criteria to ticks for comparison
+        delete_criteria = []
+        for note_data in notes_to_delete:
+            delete_criteria.append({
+                "midi": note_data["midi"],
+                "time": int(ppq * note_data["time"])
+            })
+
+        # Iterate backward through existing notes and delete matches
+        for i in range(flp.score.noteCount - 1, -1, -1):
+            note = flp.score.getNote(i)
+            for criteria in delete_criteria:
+                if note.number == criteria["midi"] and note.time == criteria["time"]:
+                    flp.score.deleteNote(i)
+                    deleted_count += 1
+                    break
+
+        return {
+            "status": "success",
+            "notes_deleted": deleted_count
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def add_notes_to_piano_roll(request):
+    """Add arbitrary notes to the piano roll from MCP request.
+
+    Request format:
+    {
+        "action": "add_notes",
+        "notes": [
+            {"midi": 60, "time": 0, "duration": 1.0, "velocity": 0.8},
+            {"midi": 64, "time": 1.0, "duration": 0.5},
+        ]
+    }
+    """
+    try:
+        notes = request.get("notes", [])
+        ppq = flp.score.PPQ
+
+        for note_data in notes:
+            midi_note = flp.Note()
+            midi_note.number = note_data["midi"]
+            note_time = note_data.get("time", note_data.get("offset", 0))
+            midi_note.time = int(ppq * note_time)
+            midi_note.length = int(ppq * note_data["duration"])
+            midi_note.velocity = note_data.get("velocity", 0.8)
+            flp.score.addNote(midi_note)
+
+        return {
+            "status": "success",
+            "notes_added": len(notes)
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def apply(form=None):
+    """
+    AUTO MODE - Processes requests silently without dialog
+
+    This script is designed to be triggered automatically via Ctrl+Alt+Y (Windows)
+    or Cmd+Opt+Y (macOS).
+
+    It processes pending requests and updates the state without showing any UI.
+    """
+
+    # Step 1: Process any pending requests
+    result = process_mcp_request()
+
+    # Step 2: Always export state AFTER processing
+    # This ensures Claude sees the updated piano roll state
+    try:
+        export_piano_roll_state()
+    except Exception as e:
+        # Silent error handling - no UI shown
+        pass
+
+    # Step 3: Write result to response file
+    if result:
+        try:
+            with open(RESPONSE_FILE, 'w') as f:
+                json.dump(result, f, indent=2)
+        except:
+            pass
