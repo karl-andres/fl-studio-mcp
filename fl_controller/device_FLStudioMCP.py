@@ -1,5 +1,5 @@
 # name=FL Studio MCP Controller
-# url=https://github.com/your-repo/fl-studio-mcp
+# url=https://github.com/karl-andres/fl-studio-mcp
 # supportedDevices=FL Studio MCP
 
 """
