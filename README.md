@@ -5,9 +5,7 @@ An MCP (Model Context Protocol) server that enables AI assistants to control FL 
 ### Quick Demo
 dont mind the scuffed audio, i had to clip with my mic bc apple wouldnt let me record desktop audio lol
 
-<div align="center">
-  <video src="assets/scuffed_demo.mp4" width="100%" controls></video>
-</div>
+https://github.com/user-attachments/assets/d4fc668f-9fe5-4ab4-9f18-76cd661029c6
 
 ## Features
 
