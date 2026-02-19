@@ -2,6 +2,13 @@
 
 An MCP (Model Context Protocol) server that enables AI assistants to control FL Studio through MIDI communication and Piano Roll scripts.
 
+### Quick Demo
+dont mind the scuffed audio, i had to clip with my mic bc apple wouldnt let me record desktop audio lol
+
+<div align="center">
+  <video src="assets/scuffed_demo.mp4" width="100%" controls></video>
+</div>
+
 ## Features
 
 ### Transport Control
