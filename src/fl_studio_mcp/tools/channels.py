@@ -162,7 +162,10 @@ def register_channel_tools(mcp: FastMCP) -> None:
 
         if velocity == 0:
             return f"Note {note_name}{octave} (MIDI {note}) released on channel {channel}"
-        return f"Note {note_name}{octave} (MIDI {note}) triggered with velocity {velocity} on channel {channel}"
+        return (
+            f"Note {note_name}{octave} (MIDI {note}) triggered with velocity {velocity}"
+            f" on channel {channel}"
+        )
 
     @mcp.tool()
     def fl_set_channel_volume(index: int, volume: float) -> str:
@@ -400,4 +403,6 @@ def register_channel_tools(mcp: FastMCP) -> None:
         channel_name = result.get("channel_name", f"Channel {channel}")
         active_steps = result.get("active_steps", sum(pattern))
         total_steps = result.get("total_steps", len(pattern))
-        return f"Channel '{channel_name}' pattern set with {active_steps}/{total_steps} steps active"
+        return (
+            f"Channel '{channel_name}' pattern set with {active_steps}/{total_steps} steps active"
+        )

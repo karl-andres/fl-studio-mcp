@@ -17,6 +17,8 @@ from typing import Any
 
 from fl_studio_mcp.utils.midi_connection import (
     get_connection as get_midi_connection,
+)
+from fl_studio_mcp.utils.midi_connection import (
     reset_connection as reset_midi_connection,
 )
 

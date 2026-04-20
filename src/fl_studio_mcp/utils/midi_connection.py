@@ -14,7 +14,6 @@ instead of keystrokes.
 from __future__ import annotations
 
 import json
-import os
 import platform
 import time
 from pathlib import Path
@@ -25,9 +24,7 @@ def _get_fl_hardware_dir() -> Path:
     """Get the FL Studio Hardware scripts directory."""
     system = platform.system()
 
-    if system == "Darwin":
-        base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
-    elif system == "Windows":
+    if system in ("Darwin", "Windows"):
         base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
     else:
         # Linux fallback
@@ -238,9 +235,8 @@ class MIDIConnection:
 
     def get_status(self) -> dict[str, Any]:
         """Get connection status information."""
-        import mido
-
         try:
+            import mido
             output_ports = mido.get_output_names()
         except Exception:
             output_ports = []

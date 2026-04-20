@@ -127,6 +127,9 @@ def register_transport_tools(mcp: FastMCP) -> None:
         Args:
             mode: Either "pattern" or "song"
         """
+        if mode not in ("pattern", "song"):
+            return "Error: mode must be 'pattern' or 'song'"
+
         conn = get_connection()
         result = conn.send_command("transport.setLoopMode", {"mode": mode})
 

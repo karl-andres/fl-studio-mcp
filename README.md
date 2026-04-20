@@ -75,19 +75,21 @@ The easiest way to install is using the provided setup script:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/fl-studio-mcp.git
+git clone https://github.com/karl-andres/fl-studio-mcp.git
 cd fl-studio-mcp
 
-# Run the setup script
-./scripts/setup.sh
+# Run the one-command installer
+./install.sh
 ```
 
 This will:
 
-1. Guide you through enabling virtual MIDI ports (IAC Driver on Mac)
-2. Install the FL Studio MIDI controller script
-3. Install the Piano Roll script (ComposeWithLLM)
-4. Install Python dependencies
+1. Install [uv](https://github.com/astral-sh/uv) if not present
+2. Install Python dependencies
+3. Guide you through enabling virtual MIDI ports (IAC Driver on Mac)
+4. Install the FL Studio MIDI controller script
+5. Install the Piano Roll script (ComposeWithLLM)
+6. Configure Claude Desktop or Claude Code automatically
 
 ## Manual Installation
 
@@ -272,6 +274,7 @@ fl-studio-mcp
 | `fl_get_piano_roll_state` | Read current piano roll notes |
 | `fl_trigger_script` | Manually trigger the FL Studio script |
 | `fl_get_piano_roll_info` | Get piano roll system info |
+| `fl_clear_request_queue` | Cancel pending queued changes |
 
 ## Example Workflows
 
@@ -371,6 +374,57 @@ This MCP server uses a hybrid approach:
    - MCP server writes note requests to JSON file
    - Sends keystroke (Cmd+Opt+Y) to trigger FL Studio script
    - Piano Roll script reads JSON and modifies notes
+
+## Development
+
+### Prerequisites
+
+- Python 3.10+
+- [uv](https://github.com/astral-sh/uv) (recommended)
+
+### Setup
+
+```bash
+# Install all dependencies including dev extras
+uv sync --dev
+
+# Or with pip
+pip install -e ".[dev]"
+```
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `uv run fl-studio-mcp` | Run the MCP server |
+| `uv run ruff check .` | Lint the codebase |
+| `uv run ruff check --fix .` | Lint and auto-fix |
+| `uv run pytest` | Run tests |
+
+### Project Structure
+
+```
+fl-studio-mcp/
+├── fl_controller/
+│   └── device_FLStudioMCP.py   # FL Studio MIDI controller script (runs inside FL Studio)
+├── scripts/
+│   ├── setup.sh                 # FL Studio script installer
+│   ├── install_mcp_for_claude.sh # Claude config installer
+│   └── ComposeWithLLM.pyscript  # Piano Roll script (runs inside FL Studio)
+├── src/fl_studio_mcp/
+│   ├── server.py                # FastMCP server entry point
+│   ├── tools/                   # MCP tool implementations
+│   │   ├── channels.py
+│   │   ├── mixer.py
+│   │   ├── piano_roll.py
+│   │   ├── plugins.py
+│   │   └── transport.py
+│   └── utils/
+│       ├── connection.py        # FL Studio connection wrapper
+│       ├── fl_trigger.py        # Piano roll keystroke trigger
+│       └── midi_connection.py   # MIDI + JSON communication layer
+└── install.sh                   # One-command installer
+```
 
 ## Credits
 

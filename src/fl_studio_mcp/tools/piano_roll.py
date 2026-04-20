@@ -14,10 +14,11 @@ Communication flow:
 from __future__ import annotations
 
 import json
-import os
 import platform
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from fl_studio_mcp.utils.fl_trigger import get_trigger, trigger_fl_studio
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -27,9 +28,7 @@ def _get_fl_scripts_dir() -> Path:
     """Get the FL Studio Piano Roll scripts directory."""
     system = platform.system()
 
-    if system == "Darwin":
-        base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
-    elif system == "Windows":
+    if system in ("Darwin", "Windows"):
         base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
     else:
         # Linux fallback (FL Studio doesn't officially support Linux)
@@ -111,9 +110,20 @@ def _midi_to_note_name(midi: int) -> str:
     return f"{note_name}{octave}"
 
 
+def _get_trigger_info(auto_trigger: bool) -> str:
+    """Attempt to trigger FL Studio and return a status suffix string."""
+    if not auto_trigger:
+        return ""
+    trigger = get_trigger()
+    if not trigger.is_supported:
+        return f" Auto-trigger not supported on {trigger.platform}. Press the trigger key manually."
+    if trigger_fl_studio():
+        return " FL Studio triggered successfully."
+    return f" Warning: Could not trigger FL Studio. Press {trigger.keystroke} manually."
+
+
 def register_piano_roll_tools(mcp: FastMCP) -> None:
     """Register piano roll tools with the MCP server."""
-    from fl_studio_mcp.utils.fl_trigger import get_trigger, trigger_fl_studio
 
     @mcp.tool()
     def fl_send_notes(
@@ -171,19 +181,7 @@ def register_piano_roll_tools(mcp: FastMCP) -> None:
 
         _write_request(requests)
 
-        # Trigger FL Studio if requested
-        trigger_info = ""
-        if auto_trigger:
-            trigger = get_trigger()
-            if trigger.is_supported:
-                success = trigger_fl_studio()
-                if success:
-                    trigger_info = " FL Studio triggered successfully."
-                else:
-                    trigger_info = f" Warning: Could not trigger FL Studio. Press {trigger.keystroke} manually."
-            else:
-                trigger_info = f" Auto-trigger not supported on {trigger.platform}. Press the trigger key manually."
-
+        trigger_info = _get_trigger_info(auto_trigger)
         note_count = len(notes)
         note_summary = ", ".join(
             f"{_midi_to_note_name(n['midi'])}@{n.get('time', 0)}"
@@ -238,17 +236,7 @@ def register_piano_roll_tools(mcp: FastMCP) -> None:
 
         _write_request(request)
 
-        # Trigger FL Studio if requested
-        trigger_info = ""
-        if auto_trigger:
-            trigger = get_trigger()
-            if trigger.is_supported:
-                success = trigger_fl_studio()
-                if success:
-                    trigger_info = " FL Studio triggered successfully."
-                else:
-                    trigger_info = f" Warning: Could not trigger FL Studio. Press {trigger.keystroke} manually."
-
+        trigger_info = _get_trigger_info(auto_trigger)
         note_names = ", ".join(_midi_to_note_name(n) for n in midi_notes)
         return f"Queued chord [{note_names}] at beat {time}, duration {duration}.{trigger_info}"
 
@@ -277,16 +265,7 @@ def register_piano_roll_tools(mcp: FastMCP) -> None:
         }
         _write_request(request)
 
-        trigger_info = ""
-        if auto_trigger:
-            trigger = get_trigger()
-            if trigger.is_supported:
-                success = trigger_fl_studio()
-                if success:
-                    trigger_info = " FL Studio triggered successfully."
-                else:
-                    trigger_info = f" Warning: Could not trigger FL Studio. Press {trigger.keystroke} manually."
-
+        trigger_info = _get_trigger_info(auto_trigger)
         return f"Queued deletion of {len(notes)} note(s).{trigger_info}"
 
     @mcp.tool()
@@ -299,16 +278,7 @@ def register_piano_roll_tools(mcp: FastMCP) -> None:
         request = {"action": "clear"}
         _write_request(request)
 
-        trigger_info = ""
-        if auto_trigger:
-            trigger = get_trigger()
-            if trigger.is_supported:
-                success = trigger_fl_studio()
-                if success:
-                    trigger_info = " FL Studio triggered successfully."
-                else:
-                    trigger_info = f" Warning: Could not trigger FL Studio. Press {trigger.keystroke} manually."
-
+        trigger_info = _get_trigger_info(auto_trigger)
         return f"Queued clear all notes.{trigger_info}"
 
     @mcp.tool()

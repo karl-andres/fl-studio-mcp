@@ -21,17 +21,13 @@ Communication flow:
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 # FL Studio API modules (available when running inside FL Studio)
 import channels
-import device
-import general
 import mixer
 import plugins
 import transport
-import ui
 
 
 def _get_script_dir() -> Path:
@@ -45,7 +41,8 @@ def _get_script_dir() -> Path:
         base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
     elif sys.platform == "win32":
         # Windows
-        base = Path(os.environ.get("USERPROFILE", "~")) / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+        userprofile = os.environ.get("USERPROFILE", "~")
+        base = Path(userprofile) / "Documents" / "Image-Line" / "FL Studio" / "Settings"
     else:
         # Linux (unlikely but handle it)
         base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
@@ -84,8 +81,7 @@ def OnMidiMsg(event):
 
 def OnIdle():
     """Called periodically when FL Studio is idle."""
-    # Could be used for polling if needed
-    pass
+    pass  # Required FL Studio API hook; no polling needed
 
 
 def execute_pending_command():
@@ -757,7 +753,8 @@ def handle_plugins_get_params(params: dict) -> dict:
                 "value": value,
                 "value_string": value_str,
             })
-        except Exception:
+        except Exception as e:
+            print(f"Warning: could not read param {i}: {e}")
             continue
 
     return {"params": param_list}
