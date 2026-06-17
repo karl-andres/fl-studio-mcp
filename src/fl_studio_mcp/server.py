@@ -104,10 +104,11 @@ def fl_connect() -> str:
     reset_connection()
 
     conn = get_connection()
-    if conn.is_connected:
-        return "Successfully connected to FL Studio via MIDI!"
-    else:
-        return f"Connection failed: {conn.connection_error}"
+    try:
+        conn.ensure_connected()
+    except RuntimeError as e:
+        return f"Connection failed: {e}"
+    return "Successfully connected to FL Studio via MIDI!"
 
 
 @mcp.tool()
@@ -118,6 +119,12 @@ def fl_connection_status() -> dict:
     and any error messages if not.
     """
     conn = get_connection()
+    # Eagerly attempt a connection so the reported status reflects actual
+    # reachability rather than the lazily-initialized flag.
+    try:
+        conn.ensure_connected()
+    except RuntimeError:
+        pass
     status = conn.get_status()
     return {
         "connected": status.get("connected", False),
