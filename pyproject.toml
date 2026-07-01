@@ -43,6 +43,12 @@ fl-studio-mcp = "fl_studio_mcp.server:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/fl_studio_mcp"]
 
+[tool.uv]
+# cryptography >=49 ships macOS wheels for arm64 only; on Intel Macs it falls
+# back to a source build (needs Rust + OpenSSL). 48.x still has universal2
+# wheels and satisfies joserfc's cryptography>=45.0.1 requirement.
+constraint-dependencies = ["cryptography<49"]
+
 [dependency-groups]
 dev = [
     "fl-studio-api-stubs>=37.0",
