@@ -1,10 +1,11 @@
 #!/bin/bash
 # FL Studio MCP Server - One-command Installation
+# Windows: use install.ps1 in PowerShell instead of this script.
 #
 # This script installs everything needed to control FL Studio from AI assistants.
 # It sets up:
 #   1. uv package manager (if not installed)
-#   2. Python dependencies
+#   2. Python dependencies (Python 3.12; required for python-rtmidi wheels on Windows)
 #   3. Virtual MIDI ports (IAC Driver on Mac)
 #   4. FLStudioMCP controller script
 #   5. ComposeWithLLM piano roll script
@@ -43,10 +44,11 @@ if ! command -v uv &> /dev/null; then
 fi
 echo -e "${GREEN}✓${NC} uv is installed"
 
-# Step 2: Install Python dependencies
+# Step 2: Install Python dependencies (3.12 — matches PyPI wheels for python-rtmidi on Windows)
 echo ""
-echo -e "${YELLOW}[2/5]${NC} Installing Python dependencies..."
-uv sync
+echo -e "${YELLOW}[2/5]${NC} Installing Python dependencies (Python 3.12)..."
+uv python install 3.12
+uv sync --python 3.12
 echo -e "${GREEN}✓${NC} Dependencies installed"
 
 # Step 3: Set up virtual MIDI and FL Studio controller
