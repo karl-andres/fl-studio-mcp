@@ -14,6 +14,7 @@ Communication flow:
 from __future__ import annotations
 
 import json
+import os
 import platform
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,13 +27,16 @@ if TYPE_CHECKING:
 
 def _get_fl_scripts_dir() -> Path:
     """Get the FL Studio Piano Roll scripts directory."""
-    system = platform.system()
-
-    if system in ("Darwin", "Windows"):
-        base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+    user_data_dir = os.environ.get("FL_STUDIO_USER_DATA_DIR")
+    if user_data_dir:
+        base = Path(user_data_dir).expanduser() / "FL Studio" / "Settings"
     else:
-        # Linux fallback (FL Studio doesn't officially support Linux)
-        base = Path.home() / ".fl-studio" / "Settings"
+        system = platform.system()
+        if system in ("Darwin", "Windows"):
+            base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+        else:
+            # Linux fallback (FL Studio doesn't officially support Linux)
+            base = Path.home() / ".fl-studio" / "Settings"
 
     scripts_dir = base / "Piano roll scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
