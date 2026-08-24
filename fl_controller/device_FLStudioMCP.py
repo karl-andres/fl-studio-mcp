@@ -36,6 +36,13 @@ def _get_script_dir() -> Path:
     FL Studio's Python environment doesn't support __file__, so we construct
     the path based on the platform's standard FL Studio settings location.
     """
+    # FL Studio includes the active controller-script folder in sys.path.
+    # Prefer it so a custom User data folder works without hard-coded paths.
+    for entry in sys.path:
+        candidate = Path(entry)
+        if candidate.name == "FLStudioMCP" and (candidate / "device_FLStudioMCP.py").exists():
+            return candidate
+
     if sys.platform == "darwin":
         # macOS
         base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
