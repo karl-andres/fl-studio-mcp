@@ -36,6 +36,10 @@ def _get_script_dir() -> Path:
     FL Studio's Python environment doesn't support __file__, so we construct
     the path based on the platform's standard FL Studio settings location.
     """
+    user_data_dir = os.environ.get("FL_STUDIO_USER_DATA_DIR")
+    if user_data_dir:
+        return Path(user_data_dir) / "FL Studio" / "Settings" / "Hardware" / "FLStudioMCP"
+
     # FL Studio includes the active controller-script folder in sys.path.
     # Prefer it so a custom User data folder works without hard-coded paths.
     for entry in sys.path:
@@ -123,7 +127,10 @@ def execute_pending_command():
 def write_response(response: dict):
     """Write response to JSON file."""
     try:
-        RESPONSE_FILE.write_text(json.dumps(response, indent=2))
+        # pathlib.Path.write_text can fail in FL Studio's embedded Python.
+        # Use the built-in file API with a string path instead.
+        with open(str(RESPONSE_FILE), "w", encoding="utf-8") as response_file:
+            json.dump(response, response_file, indent=2)
     except Exception as e:
         print(f"Error writing response: {e}")
 
