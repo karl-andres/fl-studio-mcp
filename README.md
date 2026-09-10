@@ -163,6 +163,11 @@ pip install -e .
 
 Copy the controller script to FL Studio's Hardware folder:
 
+> These commands use FL Studio's default User data folder. If you changed it in
+> **Options > File settings**, use the corresponding `FL Studio\Settings` folder
+> under your configured User data folder instead. See [Custom FL Studio User data
+> folder](#custom-fl-studio-user-data-folder).
+
 ```bash
 # macOS
 mkdir -p ~/Documents/Image-Line/FL\ Studio/Settings/Hardware/FLStudioMCP
@@ -188,7 +193,7 @@ copy scripts\ComposeWithLLM.pyscript "%USERPROFILE%\Documents\Image-Line\FL Stud
 1. **Restart FL Studio** (if it's running)
 2. Go to **Options > MIDI Settings**
 3. Under **Input**, find your virtual MIDI port (e.g., "IAC Driver Bus 1")
-4. Set the **Controller type** to **FLStudioMCP**
+4. Set the **Controller type** to **FL Studio MCP Controller**
 5. Enable the port (click to highlight it)
 
 ### 5. Configure Claude (or another MCP client)
@@ -212,6 +217,39 @@ Add to your Claude Desktop config:
 Or for Claude Code, add to your MCP settings (`~/.claude.json`, or run `claude mcp add`).
 
 Using a different MCP-compatible client (Gemini, an OpenAI-based tool, Cursor, etc.)? The same `command`/`args` pair above is all any MCP host needs — add it to that client's own MCP config in whatever format it expects. See [Which AI Clients Work With This?](#which-ai-clients-work-with-this) for what's actually been tested.
+
+### Custom FL Studio User data folder
+
+By default, the MCP server uses FL Studio's standard User data folder:
+`~/Documents/Image-Line` on macOS and `%USERPROFILE%\Documents\Image-Line` on
+Windows. If **Options > File settings > User data folder** points somewhere else,
+install both scripts under that folder and set `FL_STUDIO_USER_DATA_DIR` for the
+MCP server to the configured **Image-Line** directory.
+
+For example, if FL Studio shows `E:\Music\Image-Line` as its User data folder:
+
+```json
+{
+  "mcpServers": {
+    "fl-studio": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/fl-studio-mcp", "fl-studio-mcp"],
+      "env": {
+        "FL_STUDIO_USER_DATA_DIR": "E:\\Music\\Image-Line"
+      }
+    }
+  }
+}
+```
+
+Place the files at:
+
+- `E:\Music\Image-Line\FL Studio\Settings\Hardware\FLStudioMCP\device_FLStudioMCP.py`
+- `E:\Music\Image-Line\FL Studio\Settings\Piano roll scripts\ComposeWithLLM.pyscript`
+
+Restart FL Studio after copying the controller script. The controller resolves
+its active script directory automatically, so the environment variable is only
+required by the MCP server.
 
 ## Usage
 

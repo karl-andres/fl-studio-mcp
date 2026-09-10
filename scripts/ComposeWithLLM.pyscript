@@ -18,6 +18,9 @@ import os
 
 def get_script_dir():
     """Get the directory where this script is located"""
+    user_data_dir = os.environ.get("FL_STUDIO_USER_DATA_DIR")
+    if user_data_dir:
+        return os.path.join(user_data_dir, "FL Studio", "Settings", "Piano roll scripts")
     return os.path.expanduser("~/Documents/Image-Line/FL Studio/Settings/Piano roll scripts")
 
 
