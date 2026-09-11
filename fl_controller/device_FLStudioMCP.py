@@ -103,7 +103,8 @@ def execute_pending_command():
 
         # Execute command and get result
         result = dispatch_command(action, params)
-        response = {"success": True, **result}
+        # A handler that returns {"error": ...} has failed; do not mark it a success.
+        response = {"success": not result.get("error"), **result}
 
     except json.JSONDecodeError as e:
         response["error"] = f"Invalid JSON in command file: {e}"
@@ -111,6 +112,360 @@ def execute_pending_command():
         response["error"] = f"Error executing command: {e}"
 
     write_response(response)
+
+
+# ---------------------------------------------------------------------------
+# Pattern management (requires newer FL Studio, lazy-imported)
+# ---------------------------------------------------------------------------
+
+def _patterns_mod():
+    """Lazily import the patterns module (not available on older FL versions)."""
+    import patterns  # noqa: PLC0415
+    return patterns
+
+
+def _ui_mod():
+    """Lazily import the ui module."""
+    import ui  # noqa: PLC0415
+    return ui
+
+
+# FL window indices (midi.wid* constants) by the names the MCP tools accept.
+_WINDOWS = {
+    "mixer": 0,
+    "channel_rack": 1,
+    "playlist": 2,
+    "piano_roll": 3,
+    "browser": 4,
+}
+
+
+def _window_index(params: dict) -> int:
+    """Resolve the 'window' parameter (name or index) to an FL window index."""
+    window = params.get("window", "piano_roll")
+    if isinstance(window, int) and not isinstance(window, bool):
+        return window
+    index = _WINDOWS.get(str(window).lower())
+    if index is None:
+        raise ValueError("Unknown window '%s'. Valid: %s" % (window, ", ".join(_WINDOWS)))
+    return index
+
+
+def _window_report(ui, index: int) -> dict:
+    """Visibility/focus of one window plus the caption of whatever is focused."""
+    name = next((n for n, i in _WINDOWS.items() if i == index), str(index))
+    return {
+        "window": name,
+        "visible": bool(ui.getVisible(index)),
+        "focused": bool(ui.getFocused(index)),
+        "focused_caption": ui.getFocusedFormCaption(),
+    }
+
+
+def handle_ui_get_focus(params: dict) -> dict:
+    """Report which FL windows are visible/focused and the focused window's caption.
+
+    The caption of a focused piano roll is "Piano roll - <channel name>", which
+    is the only way to learn which channel an open piano roll targets.
+    """
+    try:
+        ui = _ui_mod()
+        return {
+            "focused": {n: bool(ui.getFocused(i)) for n, i in _WINDOWS.items()},
+            "visible": {n: bool(ui.getVisible(i)) for n, i in _WINDOWS.items()},
+            "caption": ui.getFocusedFormCaption(),
+            "form_id": ui.getFocusedFormID(),
+            "plugin": ui.getFocusedPluginName(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_ui_show_window(params: dict) -> dict:
+    """Show an FL window and (by default) give it FL-internal focus."""
+    try:
+        ui = _ui_mod()
+        index = _window_index(params)
+        ui.showWindow(index)
+        if params.get("focus", True):
+            ui.setFocused(index)
+        return _window_report(ui, index)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_ui_hide_window(params: dict) -> dict:
+    """Hide an FL window."""
+    try:
+        ui = _ui_mod()
+        index = _window_index(params)
+        ui.hideWindow(index)
+        return _window_report(ui, index)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_ui_set_focus(params: dict) -> dict:
+    """Give an FL window FL-internal focus (without changing its visibility)."""
+    try:
+        ui = _ui_mod()
+        index = _window_index(params)
+        ui.setFocused(index)
+        return _window_report(ui, index)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_pianoroll_open(params: dict) -> dict:
+    """Retarget the piano roll to a channel and make it FL's focused window.
+
+    An open piano roll ignores channels selected via scripting, and merely
+    showing/focusing it does not help either. What does work (verified against
+    FL 2026): hide the piano roll, select the channel, show it again - a
+    freshly shown piano roll picks up the selected channel. Without "index"
+    the piano roll is only shown and focused, its target is left alone.
+    """
+    try:
+        ui = _ui_mod()
+        pr = _WINDOWS["piano_roll"]
+        index = params.get("index")
+        if index is not None:
+            index = int(index)
+            if index < 0 or index >= channels.channelCount(True):
+                return {"error": "Channel index %d out of range (0..%d)"
+                        % (index, channels.channelCount(True) - 1)}
+            ui.hideWindow(pr)
+            channels.selectOneChannel(index, True)
+        ui.showWindow(pr)
+        ui.setFocused(pr)
+        report = _window_report(ui, _WINDOWS["piano_roll"])
+        if index is not None:
+            report["channel"] = {"index": index, "name": channels.getChannelName(index, True)}
+        return report
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _pattern_index_error(patterns, index: int) -> dict | None:
+    """Return an error dict for indices outside 1..patternMax, else None.
+
+    FL silently creates or selects unexpected patterns for out-of-range
+    indices instead of failing, so validate before calling into the API.
+    """
+    max_index = patterns.patternMax()
+    if index < 1 or index > max_index:
+        return {"error": f"Pattern index {index} out of range (1..{max_index})"}
+    return None
+
+
+def handle_patterns_get_count(params: dict) -> dict:
+    try:
+        patterns = _patterns_mod()
+        return {
+            "count": patterns.patternCount(),
+            "current": patterns.patternNumber(),
+            "max": patterns.patternMax(),
+        }
+    except ImportError:
+        return {"error": "patterns module not available (requires FL Studio 2024+)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_patterns_get_all(params: dict) -> dict:
+    try:
+        patterns = _patterns_mod()
+        include_default = params.get("include_default", False)
+        max_index = patterns.patternMax()
+        out = []
+        for i in range(1, max_index + 1):
+            is_default = patterns.isPatternDefault(i)
+            if is_default and not include_default:
+                continue
+            out.append({
+                "index": i,
+                "name": patterns.getPatternName(i),
+                "color": patterns.getPatternColor(i),
+                "length_beats": patterns.getPatternLength(i),
+                "is_default": is_default,
+                "is_selected": patterns.isPatternSelected(i),
+            })
+        return {"patterns": out, "current": patterns.patternNumber()}
+    except ImportError:
+        return {"error": "patterns module not available (requires FL Studio 2024+)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_patterns_get_current(params: dict) -> dict:
+    try:
+        patterns = _patterns_mod()
+        i = patterns.patternNumber()
+        return {
+            "index": i,
+            "name": patterns.getPatternName(i),
+            "length_beats": patterns.getPatternLength(i),
+        }
+    except ImportError:
+        return {"error": "patterns module not available (requires FL Studio 2024+)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_patterns_select(params: dict) -> dict:
+    try:
+        patterns = _patterns_mod()
+        index = int(params.get("index", 0))
+        error = _pattern_index_error(patterns, index)
+        if error:
+            return error
+        patterns.jumpToPattern(index)
+        return {"selected": index, "name": patterns.getPatternName(index)}
+    except ImportError:
+        return {"error": "patterns module not available (requires FL Studio 2024+)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_patterns_new_empty(params: dict) -> dict:
+    """Select the first/next empty pattern (automation-safe: no name prompt).
+
+    Note: patterns are virtual in FL; this jumps to an unused one, which is
+    the closest equivalent to "create new pattern".
+    """
+    try:
+        patterns = _patterns_mod()
+        FFNEP_DontPromptName = 1 << 1  # from midi module flags
+        patterns.findFirstNextEmptyPat(FFNEP_DontPromptName)
+        i = patterns.patternNumber()
+        return {"selected": i, "name": patterns.getPatternName(i)}
+    except ImportError:
+        return {"error": "patterns module not available (requires FL Studio 2024+)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_patterns_clone(params: dict) -> dict:
+    """Clone a pattern. NOTE: this closes the piano roll (FL behaviour)."""
+    try:
+        patterns = _patterns_mod()
+        index = params.get("index")
+        if index is None:
+            patterns.clonePattern()
+            new_index = patterns.patternNumber()
+        else:
+            error = _pattern_index_error(patterns, int(index))
+            if error:
+                return error
+            patterns.clonePattern(int(index))
+            new_index = patterns.patternNumber()
+        return {"cloned_to": new_index, "name": patterns.getPatternName(new_index)}
+    except ImportError:
+        return {"error": "patterns module not available (requires FL Studio 2024+)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_patterns_set_name(params: dict) -> dict:
+    try:
+        patterns = _patterns_mod()
+        index = int(params.get("index", 0))
+        name = str(params.get("name", ""))
+        error = _pattern_index_error(patterns, index)
+        if error:
+            return error
+        patterns.setPatternName(index, name)
+        return {"index": index, "name": patterns.getPatternName(index)}
+    except ImportError:
+        return {"error": "patterns module not available (requires FL Studio 2024+)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Undo / redo safety net
+# ---------------------------------------------------------------------------
+
+def _general_mod():
+    import general  # noqa: PLC0415
+    return general
+
+
+def handle_general_undo(params: dict) -> dict:
+    try:
+        general = _general_mod()
+        result = general.undoUp()
+        return {"undone": True, "result": result,
+                "history_pos": general.getUndoHistoryPos(),
+                "history_count": general.getUndoHistoryCount()}
+    except ImportError:
+        return {"error": "general module not available"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_general_redo(params: dict) -> dict:
+    try:
+        general = _general_mod()
+        result = general.undoDown()
+        return {"redone": True, "result": result,
+                "history_pos": general.getUndoHistoryPos(),
+                "history_count": general.getUndoHistoryCount()}
+    except ImportError:
+        return {"error": "general module not available"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# UF flags (see FL API docs for general.saveUndo)
+_UNDO_FLAGS = {
+    "none": 0, "ee": 1, "pr": 2, "playlist": 4, "knob": 32,
+    "audio_rec": 256, "auto_clip": 512, "pr_marker": 1024,
+    "pl_marker": 2048, "plugin": 4096, "ss_looping": 8192, "reset": 65536,
+}
+
+
+def handle_general_save_undo_point(params: dict) -> dict:
+    try:
+        general = _general_mod()
+        name = str(params.get("name", "MCP undo point"))
+        flags_in = params.get("flags", ["pr", "playlist", "knob", "ss_looping"])
+        if isinstance(flags_in, str):
+            flags_in = [flags_in]
+        unknown = [str(f) for f in flags_in if str(f).lower() not in _UNDO_FLAGS]
+        if unknown:
+            # Ignoring a flag silently would create an undo point that does not
+            # cover what the caller assumed.
+            return {"error": "Unknown undo flag(s): %s. Valid: %s"
+                    % (", ".join(unknown), ", ".join(_UNDO_FLAGS))}
+        flags = 0
+        for f in flags_in:
+            flags |= _UNDO_FLAGS[str(f).lower()]
+        general.saveUndo(name, flags)
+        return {"saved": True, "name": name, "flags": flags,
+                "history_pos": general.getUndoHistoryPos(),
+                "history_count": general.getUndoHistoryCount()}
+    except ImportError:
+        return {"error": "general module not available"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_general_get_undo_status(params: dict) -> dict:
+    try:
+        general = _general_mod()
+        return {
+            "history_count": general.getUndoHistoryCount(),
+            "history_pos": general.getUndoHistoryPos(),
+            "history_last": general.getUndoHistoryLast(),
+            "level_hint": general.getUndoLevelHint(),
+            "changed_flag": general.getChangedFlag(),
+            "safe_to_edit": general.safeToEdit(),
+        }
+    except ImportError:
+        return {"error": "general module not available"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def write_response(response: dict):
@@ -225,6 +580,40 @@ def dispatch_command(action: str, params: dict) -> dict:
         return handle_plugins_next_preset(params)
     elif action == "plugins.prevPreset":
         return handle_plugins_prev_preset(params)
+    elif action == "patterns.getCount":
+        return handle_patterns_get_count(params)
+    elif action == "patterns.getAll":
+        return handle_patterns_get_all(params)
+    elif action == "patterns.getCurrent":
+        return handle_patterns_get_current(params)
+    elif action == "patterns.select":
+        return handle_patterns_select(params)
+    elif action == "patterns.newEmpty":
+        return handle_patterns_new_empty(params)
+    elif action == "patterns.clone":
+        return handle_patterns_clone(params)
+    elif action == "patterns.setName":
+        return handle_patterns_set_name(params)
+    elif action == "general.undo":
+        return handle_general_undo(params)
+    elif action == "general.redo":
+        return handle_general_redo(params)
+    elif action == "general.saveUndoPoint":
+        return handle_general_save_undo_point(params)
+    elif action == "general.getUndoStatus":
+        return handle_general_get_undo_status(params)
+
+    # UI / window handling
+    elif action == "ui.getFocus":
+        return handle_ui_get_focus(params)
+    elif action == "ui.showWindow":
+        return handle_ui_show_window(params)
+    elif action == "ui.hideWindow":
+        return handle_ui_hide_window(params)
+    elif action == "ui.setFocus":
+        return handle_ui_set_focus(params)
+    elif action == "pianoroll.open":
+        return handle_pianoroll_open(params)
     elif action == "plugins.getColor":
         return handle_plugins_get_color(params)
 
