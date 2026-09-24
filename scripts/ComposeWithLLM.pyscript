@@ -26,6 +26,20 @@ RESPONSE_FILE = os.path.join(get_script_dir(), "mcp_response.json")
 STATE_FILE = os.path.join(get_script_dir(), "piano_roll_state.json")
 
 
+def write_json(path, data):
+    """Write JSON in a single call.
+
+    A temp-file + os.replace() approach is NOT possible here: FL's embedded
+    interpreter raises SystemError from os.replace (verified with FL 2026).
+    Serialising first and writing once keeps the window in which the MCP
+    server could read a half-written file as small as possible; the server
+    re-reads a file that does not parse yet.
+    """
+    text = json.dumps(data, indent=2)
+    with open(path, 'w') as f:
+        f.write(text)
+
+
 def export_piano_roll_state():
     """Export current piano roll state to JSON file"""
     notes_data = []
@@ -61,10 +75,46 @@ def export_piano_roll_state():
     }
 
     # Save to file
-    with open(STATE_FILE, 'w') as f:
-        json.dump(export_data, f, indent=2)
+    write_json(STATE_FILE, export_data)
 
     return STATE_FILE
+
+
+def get_piano_roll_context():
+    """Report context of the currently open piano roll (read-only)."""
+    context = {
+        "ppq": flp.score.PPQ,
+        "tsnum": flp.score.tsnum,
+        "tsden": flp.score.tsden,
+        "time_signature": "%d/%d" % (flp.score.tsnum, flp.score.tsden),
+        "note_count": flp.score.noteCount,
+        "marker_count": flp.score.markerCount,
+        "snap_root_note": flp.score.snap_root_note,
+        "snap_scale_helper": flp.score.snap_scale_helper,
+        "timeline_selection": list(flp.score.getTimelineSelection()),
+    }
+    # The controller-scripting modules are usually importable from piano roll
+    # scripts too; they let us report the selected channel / active pattern,
+    # which flpianoroll itself does not expose.
+    try:
+        import channels
+        idx = channels.selectedChannel()
+        context["selected_channel"] = {
+            "index": idx,
+            "name": channels.getChannelName(idx),
+        }
+    except Exception as e:
+        context["selected_channel_error"] = str(e)
+    try:
+        import patterns
+        num = patterns.patternNumber()
+        context["current_pattern"] = {
+            "index": num,
+            "name": patterns.getPatternName(num),
+        }
+    except Exception as e:
+        context["current_pattern_error"] = str(e)
+    return {"status": "success", "context": context}
 
 
 def process_mcp_request():
@@ -91,11 +141,14 @@ def process_mcp_request():
         # Process all requests in order
         total_notes = 0
         notes_deleted = 0
+        context_result = None
 
         for request in requests:
             action = request.get("action")
 
-            if action == "clear":
+            if action == "get_context":
+                context_result = get_piano_roll_context()
+            elif action == "clear":
                 # Clear all notes
                 count = flp.score.noteCount
                 for i in range(count - 1, -1, -1):
@@ -118,12 +171,15 @@ def process_mcp_request():
         with open(REQUEST_FILE, 'w') as f:
             f.write("[]")
 
-        return {
+        summary = {
             "status": "success",
             "requests_processed": len(requests),
             "notes_added": total_notes,
             "notes_deleted": notes_deleted
         }
+        if context_result is not None:
+            summary["context"] = context_result.get("context", context_result)
+        return summary
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -273,7 +329,6 @@ def apply(form=None):
     # Step 3: Write result to response file
     if result:
         try:
-            with open(RESPONSE_FILE, 'w') as f:
-                json.dump(result, f, indent=2)
-        except:
+            write_json(RESPONSE_FILE, result)
+        except Exception:
             pass

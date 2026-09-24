@@ -14,22 +14,49 @@ instead of keystrokes.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import time
 from pathlib import Path
 from typing import Any
 
 
-def _get_fl_hardware_dir() -> Path:
-    """Get the FL Studio Hardware scripts directory."""
+def get_fl_settings_base() -> Path:
+    """Get the FL Studio Settings directory (shared base for Hardware/Piano roll)."""
     system = platform.system()
 
-    if system in ("Darwin", "Windows"):
-        base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
-    else:
-        # Linux fallback
-        base = Path.home() / ".fl-studio" / "Settings"
+    env_dir = os.environ.get("FL_STUDIO_MCP_SETTINGS_DIR")
+    if env_dir:
+        return Path(env_dir)
 
+    if system in ("Darwin", "Windows"):
+        return Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+
+    # Linux: resolve the settings dir used by FL Studio running under Wine.
+    # ~/.wine/drive_c/users/<user>/Documents is typically a symlink to the XDG
+    # documents folder (here: ~/Dokumente); FL writes its user data below it.
+    candidates = []
+    wine_users = Path.home() / ".wine" / "drive_c" / "users"
+    if wine_users.is_dir():
+        for user_dir in sorted(wine_users.iterdir()):
+            docs = user_dir / "Documents"
+            if docs.exists():
+                candidates.append(docs / "Image-Line" / "FL Studio" / "Settings")
+    candidates.append(Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings")
+    candidates.append(Path.home() / "Dokumente" / "Image-Line" / "FL Studio" / "Settings")
+
+    for cand in candidates:
+        if cand.is_dir():
+            return cand
+
+    # Nothing found yet (FL never ran): use the first candidate so files land
+    # in a stable, documented location.
+    return candidates[0]
+
+
+def _get_fl_hardware_dir() -> Path:
+    """Get the FL Studio Hardware scripts directory."""
+    base = get_fl_settings_base()
     hardware_dir = base / "Hardware" / "FLStudioMCP"
     hardware_dir.mkdir(parents=True, exist_ok=True)
     return hardware_dir
@@ -96,21 +123,47 @@ class MIDIConnection:
             )
             return False
 
-        # Look for IAC Driver (Mac) or other virtual MIDI ports
-        target_port = None
-        for port_name in output_ports:
-            # Prefer IAC Driver on Mac
-            if "IAC" in port_name:
-                target_port = port_name
-                break
-            # Also accept loopMIDI on Windows or any port with "FL" in name
-            if "loopMIDI" in port_name or "FL" in port_name.upper():
-                target_port = port_name
-                break
+        system = platform.system()
 
-        # If no specific port found, use the first available
-        if target_port is None:
-            target_port = output_ports[0]
+        env_port = os.environ.get("FL_STUDIO_MCP_MIDI_PORT")
+        if env_port:
+            matches = [p for p in output_ports if p == env_port or env_port in p]
+            target_port = matches[0] if matches else None
+            if target_port is None:
+                self._error = (
+                    f"FL_STUDIO_MCP_MIDI_PORT ({env_port!r}) matches none of "
+                    f"the available ports: {output_ports}"
+                )
+                return False
+        elif system == "Linux":
+            # FL Studio under Wine: the persistent kernel "Midi Through" ALSA
+            # port is the reliable Linux->Wine bridge (verified with a
+            # winegcc midiIn test). Never fall back to the first port blindly
+            # -- that would send trigger notes to real hardware.
+            target_port = next((p for p in output_ports if "Midi Through" in p), None)
+            if target_port is None:
+                self._error = (
+                    "No 'Midi Through' ALSA port found (snd-seq-dummy). "
+                    "Enable it or set FL_STUDIO_MCP_MIDI_PORT. Ports: "
+                    f"{output_ports}"
+                )
+                return False
+        else:
+            # Look for IAC Driver (Mac) or other virtual MIDI ports
+            target_port = None
+            for port_name in output_ports:
+                # Prefer IAC Driver on Mac
+                if "IAC" in port_name:
+                    target_port = port_name
+                    break
+                # Also accept loopMIDI on Windows or any port with "FL" in name
+                if "loopMIDI" in port_name or "FL" in port_name.upper():
+                    target_port = port_name
+                    break
+
+            # If no specific port found, use the first available
+            if target_port is None:
+                target_port = output_ports[0]
 
         try:
             self._port = mido.open_output(target_port)
@@ -204,25 +257,35 @@ class MIDIConnection:
         start_time = time.time()
         poll_interval = 0.02  # 20ms between checks
 
+        last_error: str | None = None
         while time.time() - start_time < timeout:
             if self._response_file.exists():
                 try:
                     response_text = self._response_file.read_text()
                     response = json.loads(response_text)
+                except (json.JSONDecodeError, OSError) as e:
+                    # The controller is most likely still writing the file
+                    # (FL's interpreter cannot rename atomically); poll again
+                    # instead of failing on a half-written response.
+                    last_error = f"{type(e).__name__}: {e}"
+                    time.sleep(poll_interval)
+                    continue
 
-                    # Clean up response file
-                    try:
-                        self._response_file.unlink()
-                    except Exception:
-                        pass
+                # Clean up response file
+                try:
+                    self._response_file.unlink()
+                except Exception:
+                    pass
 
-                    return response
-                except json.JSONDecodeError as e:
-                    return {"success": False, "error": f"Invalid JSON in response: {e}"}
-                except Exception as e:
-                    return {"success": False, "error": f"Failed to read response: {e}"}
+                return response
 
             time.sleep(poll_interval)
+
+        if last_error:
+            return {
+                "success": False,
+                "error": f"Response file never became readable within {timeout}s ({last_error})",
+            }
 
         return {
             "success": False,
