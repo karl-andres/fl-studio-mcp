@@ -14,6 +14,7 @@ instead of keystrokes.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import time
 from pathlib import Path
@@ -22,13 +23,16 @@ from typing import Any
 
 def _get_fl_hardware_dir() -> Path:
     """Get the FL Studio Hardware scripts directory."""
-    system = platform.system()
-
-    if system in ("Darwin", "Windows"):
-        base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+    user_data_dir = os.environ.get("FL_STUDIO_USER_DATA_DIR")
+    if user_data_dir:
+        base = Path(user_data_dir).expanduser() / "FL Studio" / "Settings"
     else:
-        # Linux fallback
-        base = Path.home() / ".fl-studio" / "Settings"
+        system = platform.system()
+        if system in ("Darwin", "Windows"):
+            base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+        else:
+            # Linux fallback
+            base = Path.home() / ".fl-studio" / "Settings"
 
     hardware_dir = base / "Hardware" / "FLStudioMCP"
     hardware_dir.mkdir(parents=True, exist_ok=True)
