@@ -35,7 +35,13 @@ Ask Claude to analyze your project and compose a melody — notes appear in the 
 
 ![Claude composing a dark bell melody in FL Studio via MCP](assets/demo.gif)
 
-Hear the result: [beat_with_claude_instrument.mov](https://github.com/user-attachments/assets/c2b1a5e7-1640-41fa-82bc-18ca7cbae9e8)
+dont mind the scuffed audio, i had to clip with my mic bc apple wouldnt let me record desktop audio lol
+
+https://github.com/user-attachments/assets/d4fc668f-9fe5-4ab4-9f18-76cd661029c6
+
+Hear the original audio if you'd like
+
+https://github.com/user-attachments/assets/c2b1a5e7-1640-41fa-82bc-18ca7cbae9e8
 
 ---
 
