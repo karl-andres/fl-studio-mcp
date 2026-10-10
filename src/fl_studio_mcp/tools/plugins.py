@@ -1,7 +1,8 @@
 """Plugin control tools for FL Studio.
 
-NOTE: These tools can only control EXISTING plugins. FL Studio's scripting API
-does not support loading new plugins programmatically.
+Effects can be loaded into mixer slots from FL Studio's Plugin database.
+Instruments (channel rack generators) can't be loaded: the scripting API has
+no way to add them, so these tools only control generators already loaded.
 """
 
 from __future__ import annotations
@@ -15,6 +16,68 @@ if TYPE_CHECKING:
 def register_plugin_tools(mcp: FastMCP) -> None:
     """Register plugin control tools with the MCP server."""
     from fl_studio_mcp.utils.connection import get_connection
+    from fl_studio_mcp.utils.plugin_database import find_plugins
+
+    @mcp.tool()
+    def fl_find_plugins(query: str = "", kind: str | None = None, limit: int = 30) -> list[dict]:
+        """Search the plugins installed in FL Studio (its Plugin database).
+
+        Args:
+            query: Words to look for in the plugin name, e.g. "reverb",
+                   "fruity limiter", "valhalla". Empty lists everything.
+            kind: "effect", "generator" (instrument), or None for both
+            limit: Maximum number of results (default 30)
+        """
+        if kind not in (None, "effect", "generator"):
+            return [{"error": "kind must be 'effect', 'generator' or None"}]
+
+        entries = find_plugins(query, kind)
+        if not entries:
+            return [{"error": f"No installed plugin matches '{query}'"}]
+
+        return [
+            {"name": entry.name, "kind": entry.kind, "format": entry.format}
+            for entry in entries[:limit]
+        ]
+
+    @mcp.tool()
+    def fl_load_effect(name: str, track: int) -> dict:
+        """Load an effect plugin into the next free slot of a mixer track.
+
+        Works with any effect FL Studio knows about (Fruity, VST, VST3...).
+        FL opens the plugin's window after loading it.
+
+        Args:
+            name: Effect name as listed by fl_find_plugins, e.g. "Fruity Reeverb 2"
+            track: Mixer track index (0 = Master)
+        """
+        matches = find_plugins(name, "effect")
+        if not matches:
+            return {"error": f"No installed effect matches '{name}'. Use fl_find_plugins."}
+        exact = [entry for entry in matches if entry.name.lower() == name.lower().strip()]
+        if not exact and len(matches) > 1:
+            return {
+                "error": f"'{name}' matches several effects, use the exact name",
+                "candidates": [entry.name for entry in matches[:15]],
+            }
+        plugin = (exact or matches)[0]
+
+        conn = get_connection()
+        # Big plugins can take a few seconds to load
+        result = conn.send_command(
+            "mixer.loadPlugin",
+            {"track": track, "preset_path": str(plugin.path)},
+            timeout=30.0,
+        )
+
+        if not result.get("success", False) and "error" in result:
+            return {"error": result["error"]}
+
+        return {
+            "track": result.get("track", track),
+            "track_name": result.get("track_name", ""),
+            "loaded": result.get("loaded", []),
+        }
 
     @mcp.tool()
     def fl_is_plugin_valid(
@@ -103,6 +166,10 @@ def register_plugin_tools(mcp: FastMCP) -> None:
     ) -> list[dict]:
         """Get all parameters of a plugin with their current values.
 
+        For a mixer effect, the first entry (index "slot_mix") is not a plugin
+        parameter but the slot's Mix knob (dry/wet) in the mixer, which scales
+        the whole effect. Change it with fl_set_fx_mix.
+
         Args:
             index: Channel index (global) or mixer track index
             slot_index: Effect slot index for mixer plugins (-1 for channel rack)
@@ -120,7 +187,17 @@ def register_plugin_tools(mcp: FastMCP) -> None:
         if not result.get("success", False) and "error" in result:
             return [{"error": result["error"]}]
 
-        return result.get("params", [])
+        params = result.get("params", [])
+        slot = result.get("slot")
+        if slot:
+            params.insert(0, {
+                "index": "slot_mix",
+                "name": "Mixer slot Mix (dry/wet)",
+                "value": slot.get("mix"),
+                "value_string": slot.get("mix_display", ""),
+                "slot_enabled": slot.get("enabled", True),
+            })
+        return params
 
     @mcp.tool()
     def fl_get_plugin_param_value(

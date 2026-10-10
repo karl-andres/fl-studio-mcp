@@ -12,7 +12,7 @@ Requirements:
 - For piano roll: ComposeWithLLM.pyscript installed in FL Studio
 
 Limitations:
-- Cannot load new plugins (only control existing ones)
+- Can load effects into mixer slots, but not instruments into the channel rack
 - Cannot create new patterns programmatically
 """
 
@@ -40,12 +40,18 @@ FL Studio must be running with the FLStudioMCP MIDI controller enabled.
 
 Available tool categories:
 - Transport: Play, stop, record, tempo, position control
-- Mixer: Volume, pan, mute, solo, track management
+- Mixer: Volume, pan, stereo separation, mute, solo, track management,
+  effect slots (load, mix/dry-wet, bypass), routing and send levels
 - Channels: Channel info, note triggering, step sequencer
-- Plugins: Parameter control, preset navigation (cannot load new plugins)
+- Plugins: Parameter control, preset navigation, plugin search
+
+Mixer effect slots have their own Mix knob (dry/wet) that scales the whole
+effect and is not a plugin parameter. Check it (fl_get_track_fx or
+fl_get_mixer_track_info) before judging how strong an effect is.
 
 Important limitations:
-1. Cannot load new VST/AU plugins - only control existing ones
+1. Effects can be loaded into mixer slots (fl_load_effect), but instruments
+   can't be added to the channel rack - only existing ones can be controlled
 2. Cannot create new patterns programmatically
 3. Note triggering (fl_trigger_note) is real-time only - notes won't persist
    unless FL Studio is recording. Use step sequencer (fl_set_grid_bit) for

@@ -25,10 +25,13 @@ from pathlib import Path
 
 # FL Studio API modules (available when running inside FL Studio)
 import channels
+import device
+import general
 import midi
 import mixer
 import plugins
 import transport
+import ui
 
 
 def _get_script_dir() -> Path:
@@ -166,6 +169,18 @@ def dispatch_command(action: str, params: dict) -> dict:
         return handle_mixer_set_track_color(params)
     elif action == "mixer.setStereoSep":
         return handle_mixer_set_stereo_sep(params)
+    elif action == "mixer.getTrackFx":
+        return handle_mixer_get_track_fx(params)
+    elif action == "mixer.setSlotMix":
+        return handle_mixer_set_slot_mix(params)
+    elif action == "mixer.setSlotEnabled":
+        return handle_mixer_set_slot_enabled(params)
+    elif action == "mixer.getRouting":
+        return handle_mixer_get_routing(params)
+    elif action == "mixer.setRoute":
+        return handle_mixer_set_route(params)
+    elif action == "mixer.loadPlugin":
+        return handle_mixer_load_plugin(params)
 
     # Channel commands
     elif action == "channels.getCount":
@@ -316,6 +331,7 @@ def handle_mixer_get_track_count() -> dict:
 def handle_mixer_get_track_info(params: dict) -> dict:
     """Get info about a mixer track."""
     track = params.get("track", 0)
+    _check_track(track)
     return {
         "index": track,
         "name": mixer.getTrackName(track),
@@ -323,10 +339,13 @@ def handle_mixer_get_track_info(params: dict) -> dict:
         "volume_db": mixer.getTrackVolume(track, 1),
         "pan": mixer.getTrackPan(track),
         "stereo_separation": mixer.getTrackStereoSep(track),
+        "stereo_separation_display": _rec_display(_track_event(track, midi.REC_Mixer_SS)),
         "is_muted": mixer.isTrackMuted(track) == 1,
         "is_solo": mixer.isTrackSolo(track) == 1,
         "is_armed": mixer.isTrackArmed(track) == 1,
         "color": hex(mixer.getTrackColor(track)),
+        "fx_slots": _loaded_slots(track),
+        "sends_to": _routes_from(track),
     }
 
 
@@ -334,7 +353,8 @@ def handle_mixer_get_all_tracks(params: dict) -> dict:
     """Get info about all mixer tracks."""
     include_empty = params.get("include_empty", False)
     tracks = []
-    track_count = mixer.trackCount()
+    # trackCount() also counts the hidden "Current" track at the end
+    track_count = mixer.trackCount() - 1
 
     for i in range(track_count):
         name = mixer.getTrackName(i)
@@ -442,8 +462,239 @@ def handle_mixer_set_stereo_sep(params: dict) -> dict:
     """Set mixer track stereo separation."""
     track = params.get("track", 0)
     separation = params.get("separation", 0.0)
-    mixer.setTrackStereoSep(track, separation)
-    return {"separation": separation}
+    _check_track(track)
+    mixer.setTrackStereoSep(track, separation, midi.PIM_None)
+    # Like slot changes, this can show up only after the callback returns:
+    # read it back with a separate command (mixer.getTrackInfo).
+    return {"track": track}
+
+
+# =============================================================================
+# Mixer FX Slot & Routing Handlers
+# =============================================================================
+
+# Every mixer track has 10 effect slots
+MIXER_SLOT_COUNT = 10
+
+
+def _check_track(track: int) -> None:
+    """Raise if the mixer track doesn't exist."""
+    # trackCount() also counts the hidden "Current" track at the end
+    if not 0 <= track < mixer.trackCount() - 1:
+        raise ValueError(f"Mixer track {track} does not exist")
+
+
+def _check_slot(track: int, slot: int) -> None:
+    """Raise if the effect slot is out of range or empty."""
+    _check_track(track)
+    if not 0 <= slot < MIXER_SLOT_COUNT:
+        raise ValueError(f"Slot must be between 0 and {MIXER_SLOT_COUNT - 1}")
+    if not mixer.isTrackPluginValid(track, slot):
+        raise ValueError(f"No plugin loaded in slot {slot} of mixer track {track}")
+
+
+def _track_event(track: int, offset: int) -> int:
+    """REC event ID of a track-level control (stereo sep, sends...)."""
+    return mixer.getTrackPluginId(track, 0) + offset
+
+
+def _slot_event(track: int, slot: int, offset: int) -> int:
+    """REC event ID of an effect slot control (mix level, on/off)."""
+    return mixer.getTrackPluginId(track, slot) + offset
+
+
+def _rec_display(event_id: int) -> str:
+    """Value of a REC event formatted the way FL displays it (e.g. '15%')."""
+    return device.getLinkedValueString(event_id)
+
+
+def _set_rec_value(event_id: int, value: float) -> None:
+    """Set the control behind a REC event from a 0.0-1.0 value."""
+    # REC_MIDIController makes FL read the value on the 0..FromMIDI_Max scale
+    scaled = round(min(max(value, 0.0), 1.0) * midi.FromMIDI_Max)
+    general.processRECEvent(event_id, scaled, midi.REC_MIDIController)
+
+
+def _slot_info(track: int, slot: int) -> dict:
+    """Describe a loaded effect slot, including its Mix (dry/wet) knob."""
+    mix_event = _slot_event(track, slot, midi.REC_Plug_MixLevel)
+    if hasattr(mixer, "getPluginMixLevel"):  # API 37+
+        mix = mixer.getPluginMixLevel(track, slot)
+    else:
+        mix = device.getLinkedValue(mix_event)
+    return {
+        "slot": slot,
+        "name": plugins.getPluginName(track, slot),
+        "enabled": device.getLinkedValue(_slot_event(track, slot, midi.REC_Plug_Mute)) >= 0.5,
+        "mix": mix,
+        "mix_display": _rec_display(mix_event),
+    }
+
+
+def _loaded_slots(track: int) -> list:
+    return [
+        _slot_info(track, slot)
+        for slot in range(MIXER_SLOT_COUNT)
+        if mixer.isTrackPluginValid(track, slot)
+    ]
+
+
+def _route_info(src: int, dst: int) -> dict:
+    """Describe the route from src to dst, including its send level."""
+    send_event = _track_event(src, midi.REC_Mixer_Send_First + dst)
+    if hasattr(mixer, "getRouteToLevel"):  # API 36+
+        level = mixer.getRouteToLevel(src, dst)
+    else:
+        level = device.getLinkedValue(send_event)
+    return {
+        "track": dst,
+        "name": mixer.getTrackName(dst),
+        "level": level,
+        "level_display": _rec_display(send_event),
+    }
+
+
+def _routes_from(track: int) -> list:
+    return [
+        _route_info(track, dst)
+        for dst in range(mixer.trackCount() - 1)
+        if dst != track and mixer.getRouteSendActive(track, dst)
+    ]
+
+
+def handle_mixer_get_track_fx(params: dict) -> dict:
+    """List the effects loaded on a mixer track with their mix levels."""
+    track = params.get("track", 0)
+    _check_track(track)
+    slots_enabled = True
+    if hasattr(mixer, "isTrackSlotsEnabled"):  # API 19+
+        slots_enabled = mixer.isTrackSlotsEnabled(track) == 1
+    return {
+        "track": track,
+        "track_name": mixer.getTrackName(track),
+        "slots_enabled": slots_enabled,
+        "slots": _loaded_slots(track),
+    }
+
+
+def handle_mixer_set_slot_mix(params: dict) -> dict:
+    """Set the Mix (dry/wet) knob of an effect slot."""
+    track = params.get("track", 0)
+    slot = params.get("slot", 0)
+    mix = params.get("mix", 1.0)
+    _check_slot(track, slot)
+    if hasattr(mixer, "setPluginMixLevel"):  # API 37+
+        mixer.setPluginMixLevel(track, slot, mix, midi.PIM_None)
+    else:
+        _set_rec_value(_slot_event(track, slot, midi.REC_Plug_MixLevel), mix)
+    # FL applies slot changes after this callback returns: read them back with
+    # a separate command (mixer.getTrackFx) rather than here.
+    return {"name": plugins.getPluginName(track, slot)}
+
+
+def handle_mixer_set_slot_enabled(params: dict) -> dict:
+    """Turn an effect slot on or off (bypass)."""
+    track = params.get("track", 0)
+    slot = params.get("slot", 0)
+    enabled = params.get("enabled", True)
+    _check_slot(track, slot)
+    _set_rec_value(_slot_event(track, slot, midi.REC_Plug_Mute), 1.0 if enabled else 0.0)
+    return {"name": plugins.getPluginName(track, slot)}
+
+
+def handle_mixer_get_routing(params: dict) -> dict:
+    """List where a mixer track sends to and which tracks feed into it."""
+    track = params.get("track", 0)
+    _check_track(track)
+    receives_from = [
+        {"track": src, "name": mixer.getTrackName(src)}
+        for src in range(mixer.trackCount() - 1)
+        if src != track and mixer.getRouteSendActive(src, track)
+    ]
+    return {
+        "track": track,
+        "track_name": mixer.getTrackName(track),
+        "sends_to": _routes_from(track),
+        "receives_from": receives_from,
+    }
+
+
+def handle_mixer_set_route(params: dict) -> dict:
+    """Create, remove or adjust the route from one mixer track to another."""
+    src = params.get("src", 0)
+    dst = params.get("dst", 0)
+    enabled = params.get("enabled", True)
+    level = params.get("level")  # None = leave the send level unchanged
+    exclusive = params.get("exclusive", False)
+    _check_track(src)
+    _check_track(dst)
+    if src == dst:
+        raise ValueError("A mixer track cannot be routed to itself")
+
+    if enabled and exclusive:
+        # Like FL's "Route to this track only": drop every other output
+        for other in range(mixer.trackCount() - 1):
+            if other not in (src, dst) and mixer.getRouteSendActive(src, other):
+                mixer.setRouteTo(src, other, False)
+
+    mixer.setRouteTo(src, dst, enabled)
+    if enabled and level is not None:
+        if hasattr(mixer, "setRouteToLevel"):  # API 36+
+            mixer.setRouteToLevel(src, dst, level)
+        else:
+            _set_rec_value(_track_event(src, midi.REC_Mixer_Send_First + dst), level)
+    mixer.afterRoutingChanged()
+
+    return {
+        "src": src,
+        "src_name": mixer.getTrackName(src),
+        "dst": dst,
+        "active": mixer.getRouteSendActive(src, dst) == 1,
+        "sends_to": _routes_from(src),
+    }
+
+
+def _slot_names(track: int) -> dict:
+    return {
+        slot: plugins.getPluginName(track, slot)
+        for slot in range(MIXER_SLOT_COUNT)
+        if mixer.isTrackPluginValid(track, slot)
+    }
+
+
+def handle_mixer_load_plugin(params: dict) -> dict:
+    """Load an effect into the next free slot of a mixer track from a .fst preset."""
+    track = params.get("track", 0)
+    preset_path = params.get("preset_path", "")
+    _check_track(track)
+    if not os.path.isfile(preset_path):
+        raise ValueError(f"Preset file not found: {preset_path}")
+    before = _slot_names(track)
+    if len(before) == MIXER_SLOT_COUNT:
+        raise ValueError(f"All {MIXER_SLOT_COUNT} effect slots of mixer track {track} are full")
+
+    # The scripting API has no "load plugin" call, but the audio editor launcher
+    # (what the Mackie script uses to drop Edison on a track) loads any .fst
+    # preset into the track's next free slot. It only takes paths relative to
+    # FL's Data/System folder, and native plugins need the exact relative path.
+    try:
+        relative_preset = os.path.relpath(preset_path, _fl_data_system_dir())
+    except ValueError:
+        raise ValueError("The preset must be on the same drive as FL Studio") from None
+    ui.launchAudioEditor(False, "", track, relative_preset, "")
+
+    after = _slot_names(track)
+    loaded = [_slot_info(track, slot) for slot, name in after.items() if before.get(slot) != name]
+    if not loaded:
+        raise ValueError(f"FL Studio did not load the preset {preset_path}")
+    return {"track": track, "track_name": mixer.getTrackName(track), "loaded": loaded}
+
+
+def _fl_data_system_dir() -> str:
+    """FL Studio's Data/System folder, the base for launchAudioEditor presets."""
+    # midi.py ships in <FL Studio>/Shared/Python/Lib
+    fl_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(midi.__file__))))
+    return os.path.join(fl_dir, "Data", "System")
 
 
 # =============================================================================
@@ -758,7 +1009,11 @@ def handle_plugins_get_params(params: dict) -> dict:
             print(f"Warning: could not read param {i}: {e}")
             continue
 
-    return {"params": param_list}
+    response = {"params": param_list}
+    if slot_index >= 0 and mixer.isTrackPluginValid(index, slot_index):
+        # The slot's Mix knob scales the whole effect but isn't a plugin param
+        response["slot"] = _slot_info(index, slot_index)
+    return response
 
 
 def handle_plugins_get_param_value(params: dict) -> dict:
