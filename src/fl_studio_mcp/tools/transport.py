@@ -139,6 +139,74 @@ def register_transport_tools(mcp: FastMCP) -> None:
         return f"Loop mode set to {mode}"
 
     @mcp.tool()
+    def fl_get_tempo() -> dict:
+        """Get the current project tempo in BPM."""
+        conn = get_connection()
+        result = conn.send_command("transport.getTempo")
+
+        if not result.get("success", False) and "error" in result:
+            return {"error": result["error"]}
+
+        return {"bpm": result.get("bpm", 0)}
+
+    @mcp.tool()
+    def fl_set_tempo(bpm: float) -> str:
+        """Set the project tempo in BPM.
+
+        Args:
+            bpm: Tempo in beats per minute (10.0 to 522.0, FL Studio's own range).
+        """
+        if isinstance(bpm, bool) or not isinstance(bpm, (int, float)):
+            return "Error: bpm must be a number"
+        if not 10.0 <= bpm <= 522.0:
+            return "Error: bpm must be between 10 and 522"
+
+        conn = get_connection()
+        result = conn.send_command("transport.setTempo", {"bpm": bpm})
+
+        if not result.get("success", False) and "error" in result:
+            return f"Error: {result['error']}"
+
+        return f"Tempo set to {result.get('bpm', bpm):g} BPM"
+
+    @mcp.tool()
+    def fl_set_metronome(enabled: bool | None = None) -> str:
+        """Enable, disable or toggle the metronome click.
+
+        Args:
+            enabled: True to enable, False to disable, None to toggle.
+        """
+        conn = get_connection()
+        result = conn.send_command("transport.setMetronome", {"enabled": enabled})
+
+        if not result.get("success", False) and "error" in result:
+            return f"Error: {result['error']}"
+
+        return f"Metronome {'on' if result.get('metronome') else 'off'}"
+
+    @mcp.tool()
+    def fl_project_snapshot() -> dict:
+        """Get the whole project state in one call (one MIDI round-trip).
+
+        Returns tempo, transport status, metronome state, patterns, channels,
+        named mixer tracks with their insert effects, playlist tracks,
+        arrangement markers and undo status. Prefer this over calling the
+        individual getters one by one when orienting in a project.
+
+        Sections needing FL modules that this FL version lacks contain an
+        inline "error" instead of failing the whole snapshot.
+        """
+        conn = get_connection()
+        # Bigger payload than any single getter: give FL a little more time.
+        result = conn.send_command("project.getSnapshot", timeout=5.0)
+
+        if not result.get("success", False) and "error" in result:
+            return {"error": result["error"]}
+
+        result.pop("success", None)
+        return result
+
+    @mcp.tool()
     def fl_set_playback_speed(speed: float) -> str:
         """Set the playback speed multiplier.
 

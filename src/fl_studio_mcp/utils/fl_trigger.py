@@ -18,8 +18,9 @@ TRIGGER_DELAY = 2.0
 class FLStudioTrigger:
     """Handles triggering FL Studio's Piano Roll script via keystrokes.
 
-    The trigger sends Cmd+Opt+Y (macOS) or Ctrl+Alt+Y (Windows) to FL Studio,
-    which executes the ComposeWithLLM.pyscript to process pending JSON requests.
+    The trigger sends Cmd+Opt+Y on macOS or Ctrl+Alt+Y on Windows and Linux/X11
+    (via xdotool) to FL Studio, which executes the ComposeWithLLM.pyscript to
+    process pending JSON requests.
     """
 
     def __init__(self) -> None:
@@ -33,6 +34,8 @@ class FLStudioTrigger:
             self._trigger_func = self._trigger_macos
         elif self._system == "Windows":
             self._trigger_func = self._trigger_windows
+        elif self._system == "Linux":
+            self._trigger_func = self._trigger_linux
         else:
             self._trigger_func = None
 
@@ -177,6 +180,101 @@ class FLStudioTrigger:
         except Exception:
             return False
 
+    # FL Studio window titles look like "<project>.flp - FL Studio 2026" or
+    # "FL Studio 2026". A plain substring search for "FL Studio" also matches
+    # unrelated windows (e.g. a browser tab showing the fl-studio-mcp repo),
+    # so prefer titles that end in "FL Studio <version>".
+    LINUX_WINDOW_RE = r"( - |^)FL Studio [0-9]+$"
+
+    def _find_fl_windows_linux(self) -> list[str]:
+        """Return candidate FL Studio window ids, best match first."""
+        try:
+            search = subprocess.run(
+                ["xdotool", "search", "--onlyvisible", "--name", self.LINUX_WINDOW_RE],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            # No window matches the strict pattern; fall back to a substring
+            # search (xdotool exits 1 when nothing is found).
+            try:
+                search = subprocess.run(
+                    ["xdotool", "search", "--onlyvisible", "--name", "FL Studio"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=True,
+                )
+            except subprocess.CalledProcessError:
+                return []
+        return [line for line in search.stdout.splitlines() if line.strip()]
+
+    def _trigger_linux(self) -> bool:
+        """Trigger FL Studio (running under Wine/X11) using xdotool.
+
+        Mirrors the Windows path: focus the FL Studio window first so the
+        Ctrl+Alt+Y keystroke actually reaches it. Requires an X11 session
+        (xdotool cannot synthesize keys on Wayland).
+        """
+        try:
+            window_ids = self._find_fl_windows_linux()
+            if not window_ids:
+                return False
+
+            window_id = window_ids[-1]
+            subprocess.run(
+                ["xdotool", "windowactivate", "--sync", window_id],
+                capture_output=True,
+                timeout=10,
+                check=True,
+            )
+            time.sleep(0.3)
+
+            subprocess.run(
+                ["xdotool", "key", "ctrl+alt+y"],
+                capture_output=True,
+                timeout=10,
+                check=True,
+            )
+            return True
+        except Exception:
+            return False
+
+    def activate_window(self) -> bool:
+        """Bring the FL Studio window to the OS foreground without sending a key.
+
+        FL only honours its own window-focus API (ui.setFocused) while its main
+        window is the active OS window, so callers that want to focus the piano
+        roll through the controller must activate FL first, then focus, then
+        send the keystroke via trigger().
+        """
+        try:
+            if self._system == "Darwin":
+                subprocess.run(
+                    ["osascript", "-e", 'tell application "FL Studio" to activate'],
+                    capture_output=True,
+                    timeout=5,
+                )
+                return True
+            if self._system == "Windows":
+                return self._focus_fl_studio_windows()
+            if self._system == "Linux":
+                window_ids = self._find_fl_windows_linux()
+                if not window_ids:
+                    return False
+                subprocess.run(
+                    ["xdotool", "windowactivate", "--sync", window_ids[-1]],
+                    capture_output=True,
+                    timeout=10,
+                    check=True,
+                )
+                return True
+        except Exception:
+            return False
+        return False
+
     def trigger(self, delay: float = TRIGGER_DELAY) -> bool:
         """Trigger FL Studio to execute the Piano Roll script.
 
@@ -211,6 +309,8 @@ class FLStudioTrigger:
         if self._system == "Darwin":
             return "Cmd+Opt+Y"
         elif self._system == "Windows":
+            return "Ctrl+Alt+Y"
+        elif self._system == "Linux":
             return "Ctrl+Alt+Y"
         return "Unknown"
 

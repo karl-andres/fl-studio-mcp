@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from fl_studio_mcp.utils.validation import rgb_error
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -221,6 +223,10 @@ def register_mixer_tools(mcp: FastMCP) -> None:
             green: Green component (0-255)
             blue: Blue component (0-255)
         """
+        err = rgb_error(red, green, blue)
+        if err:
+            return err
+
         conn = get_connection()
         result = conn.send_command("mixer.setTrackColor", {
             "track": track,
@@ -233,6 +239,101 @@ def register_mixer_tools(mcp: FastMCP) -> None:
             return f"Error: {result['error']}"
 
         return f"Track {track} color set to RGB({red}, {green}, {blue})"
+
+    @mcp.tool()
+    def fl_get_track_peaks(track: int | None = None, threshold: float = 0.0001) -> dict:
+        """Get current output peak levels of mixer tracks (meaningful during playback).
+
+        Peak values are linear: 1.0 = 0 dBFS, above 1.0 = clipping. When FL Studio
+        is not playing, all peaks read 0. Use this to check levels and find
+        clipping tracks while the song plays.
+
+        Args:
+            track: Mixer track index for a single track (0 = Master).
+                   None returns every track whose peak exceeds `threshold`.
+            threshold: Minimum peak for a track to be included when track is None.
+        """
+        conn = get_connection()
+        if track is None:
+            result = conn.send_command("mixer.getAllPeaks", {"threshold": threshold})
+        else:
+            result = conn.send_command("mixer.getPeaks", {"track": track})
+
+        if not result.get("success", False) and "error" in result:
+            return {"error": result["error"]}
+
+        result.pop("success", None)
+        return result
+
+    @mcp.tool()
+    def fl_route_track(source: int, dest: int, enabled: bool = True) -> str:
+        """Enable or disable a send from one mixer track to another.
+
+        Use this to build sidechain buses, parallel compression chains or
+        send-effect tracks (route several tracks into one insert with a
+        reverb/delay on it).
+
+        Args:
+            source: Source mixer track index (1-124; Master cannot be a source)
+            dest: Destination mixer track index (0 = Master)
+            enabled: True to create the route, False to remove it
+        """
+        if source == dest:
+            return "Error: source and dest must differ"
+
+        conn = get_connection()
+        result = conn.send_command("mixer.routeTo", {
+            "source": source,
+            "dest": dest,
+            "enabled": enabled,
+        })
+
+        if not result.get("success", False) and "error" in result:
+            return f"Error: {result['error']}"
+
+        active = result.get("active", enabled)
+        return f"Route track {source} -> track {dest}: {'active' if active else 'removed'}"
+
+    @mcp.tool()
+    def fl_get_track_routing(track: int) -> dict:
+        """List the destination tracks a mixer track sends its signal to.
+
+        Args:
+            track: Mixer track index
+        """
+        conn = get_connection()
+        result = conn.send_command("mixer.getRouting", {"track": track})
+
+        if not result.get("success", False) and "error" in result:
+            return {"error": result["error"]}
+
+        return {
+            "track": result.get("track", track),
+            "name": result.get("name", ""),
+            "routes_to": result.get("routes_to", []),
+        }
+
+    @mcp.tool()
+    def fl_get_track_fx_slots(track: int) -> dict:
+        """List the effect plugins loaded in a mixer track's 10 insert slots.
+
+        Use the returned slot numbers with the fl_*_plugin_* tools
+        (index=track, slot_index=slot) to inspect or tweak each effect.
+
+        Args:
+            track: Mixer track index (0 = Master)
+        """
+        conn = get_connection()
+        result = conn.send_command("mixer.getTrackSlots", {"track": track})
+
+        if not result.get("success", False) and "error" in result:
+            return {"error": result["error"]}
+
+        return {
+            "track": result.get("track", track),
+            "name": result.get("name", ""),
+            "slots": result.get("slots", []),
+        }
 
     @mcp.tool()
     def fl_set_stereo_separation(track: int, separation: float) -> str:
