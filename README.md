@@ -362,6 +362,19 @@ fl-studio-mcp
 
 ## Example Workflows
 
+### Checking a WAV Render
+
+Pass a completed local WAV to `fl_verify_audio_output(audio_path, expected_duration)`.
+`expected_duration` is optional and measured in seconds; the comparison allows
+one sample frame of rounding. The tool reports peak, RMS and DC offset per
+channel, and counts full-scale and nonfinite samples. A silent file or an
+incomplete scan cannot pass. If `max_frames` truncates the scan, the metrics
+describe only the scanned prefix. The tool also caps each scan at 50 million
+samples across all channels.
+
+The check reads PCM and IEEE float RIFF/WAVE files, with no FL connection or
+project writes. It checks the file and its signal, not the quality of the mix.
+
 ### Adjusting a Mix
 
 ```text

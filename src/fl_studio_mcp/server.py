@@ -135,6 +135,14 @@ def fl_connection_status() -> dict:
     }
 
 
+def _register_wav_tools() -> None:
+    from fl_studio_mcp.tools.wav_validation import register_wav_validation_tools
+
+    register_wav_validation_tools(mcp)
+
+
+_register_wav_tools()
+
 # Register all tools
 register_transport_tools(mcp)
 register_mixer_tools(mcp)
