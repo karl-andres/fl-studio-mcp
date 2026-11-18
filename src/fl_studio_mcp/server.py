@@ -27,6 +27,7 @@ from fl_studio_mcp.tools import (
     register_plugin_tools,
     register_transport_tools,
 )
+from fl_studio_mcp.tools.plugin_editor import register_plugin_editor_tools
 from fl_studio_mcp.utils.connection import get_connection, reset_connection
 
 # Create the MCP server
@@ -139,6 +140,7 @@ register_transport_tools(mcp)
 register_mixer_tools(mcp)
 register_channel_tools(mcp)
 register_plugin_tools(mcp)
+register_plugin_editor_tools(mcp)
 register_piano_roll_tools(mcp)
 
 
