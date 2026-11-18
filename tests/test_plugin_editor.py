@@ -19,16 +19,27 @@ def bridge(monkeypatch, tmp_path):
         coupled=False,
         editable=True,
         sent=[],
+        second_effect=None,
     )
 
+    def values_at(index, slot):
+        return host.second_effect if (index, slot) == (12, 9) else host.values
+
+    def is_valid(index, slot, use_global):
+        return use_global and (
+            (index, slot) in {(1, -1), (13, 9)}
+            or (index, slot) == (12, 9) and host.second_effect is not None
+        )
+
     def set_value(value, parameter, index, slot, pickup, global_index):
-        assert (index, slot) in {(1, -1), (13, 9)}
+        assert is_valid(index, slot, global_index)
         assert pickup == 0 and global_index is True
+        values = values_at(index, slot)
         host.writes.append(parameter)
         if parameter != host.reject:
-            host.values[parameter] = value
+            values[parameter] = value
         if host.coupled and parameter == 1:
-            host.values[0] = 0.25
+            values[0] = 0.25
 
     modules = {
         "channels": {"channelCount": lambda use_global: 2},
@@ -37,12 +48,12 @@ def bridge(monkeypatch, tmp_path):
         "transport": {},
         "general": {"safeToEdit": lambda: host.editable},
         "plugins": {
-            "isValid": lambda i, s, g: (i, s) in {(1, -1), (13, 9)} and g,
+            "isValid": is_valid,
             "getPluginName": lambda i, s, user, glob: "Instrument" if s == -1 else "Effect",
             "getParamCount": lambda *args: len(host.names),
             "getParamName": lambda i, *args: host.names[i],
-            "getParamValue": lambda i, *args: host.values[i],
-            "getParamValueString": lambda i, index, slot, glob: f"{host.values[i]:.0%}",
+            "getParamValue": lambda i, index, slot, glob: values_at(index, slot)[i],
+            "getParamValueString": lambda i, index, slot, glob: f"{values_at(index, slot)[i]:.0%}",
             "setParamValue": set_value,
         },
     }
@@ -81,6 +92,23 @@ def test_search_finds_named_parameter_beyond_first_page_and_reads_display(bridge
     assert result["parameters"] == [
         {"index": 130, "name": "Wide", "value": 0.2, "value_text": "20%"}
     ]
+
+
+def test_only_edits_the_requested_instance_of_identical_effects(bridge):
+    host, editor = bridge
+    host.second_effect = host.values.copy()
+    first, second = editor.instances("effect")["instances"]
+    assert first["plugin_name"] == second["plugin_name"]
+
+    result = editor.edit(first["target"], [{"parameter": "Drive", "value": 0.4}], None, False)
+
+    assert result["success"]
+    assert editor.describe(first["target"], "Drive", 0, 1, True, False)["parameters"][0][
+        "value"
+    ] == 0.4
+    assert editor.describe(second["target"], "Drive", 0, 1, True, False)["parameters"][0][
+        "value"
+    ] == 0.25
 
 
 @pytest.mark.parametrize("target", ["channel:1", "mixer:13:9"])

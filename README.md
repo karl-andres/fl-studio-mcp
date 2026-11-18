@@ -80,6 +80,18 @@ https://github.com/user-attachments/assets/c2b1a5e7-1640-41fa-82bc-18ca7cbae9e8
 - Navigate presets (next/previous)
 - Query plugin info
 
+The generic parameter editor does not open the plugin, switch focus, or send
+mouse or keyboard input. It works only with parameters FL exposes.
+
+#### Window geometry (Windows)
+
+`fl_list_windows` reports the handle, process ID, title and physical screen
+bounds of supported visible FL Studio forms. Pass these observations plus a new
+top-left position to `fl_move_window`. Supply both size fields to request a
+resize. The tool calls Windows directly without activating the form or sending
+input. FL may clamp a docked form; check `verified_geometry` and the returned
+bounds before relying on the requested position.
+
 ### Piano Roll Control
 
 - **Add notes** to the piano roll with precise timing
@@ -419,7 +431,8 @@ The fingerprint checks the location, plugin name and parameter count.
 
 The edit reports values read back from FL. A partial failure can leave earlier
 changes applied. Some plugins round or reject values. Private controls that
-the plugin does not expose to FL require the plugin's own UI or preset workflow.
+the plugin does not expose to FL are outside this tool's scope. The tool does
+not fall back to clicking the plugin editor or changing its preset.
 Install and reload the updated controller script to enable these tools.
 
 ---
