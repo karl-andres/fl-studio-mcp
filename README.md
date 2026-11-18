@@ -335,6 +335,9 @@ fl-studio-mcp
 | `fl_get_plugin_name` | Get plugin name |
 | `fl_get_plugin_param_count` | Get parameter count |
 | `fl_get_plugin_params` | List all parameters |
+| `fl_list_plugin_instances` | Find loaded Channel Rack instruments and Mixer effects |
+| `fl_describe_plugin` | Search a plugin's parameters and read their values |
+| `fl_edit_plugin` | Edit parameters by name or index with readback |
 | `fl_get_plugin_param_value` | Get parameter value |
 | `fl_set_plugin_param_value` | Set parameter value |
 | `fl_get_preset_count` | Get preset count |
@@ -388,6 +391,23 @@ fl-studio-mcp
 ```text
 "List the parameters of the plugin on channel 0 and set the filter cutoff to 50%"
 ```
+
+For any loaded instrument or effect, use `fl_list_plugin_instances` to find its
+target. `channel:13` is global Channel Rack index 13 and `mixer:23:0` is the first
+effect slot on mixer track 23. `fl_describe_plugin` lists matching parameter
+names, indices, and values. Set `include_text` to read labels supplied by the plugin
+and follow `next_start` for more results.
+
+Pass the returned fingerprint to `fl_edit_plugin`, along with edits such as
+`{"parameter": "Mix", "value": 0.3}`. Use an index for duplicate names and
+`dry_run: true` to preview. Values use FL's normalized 0–1 range. Optional
+`expected_name` and `expected_value` fields guard the observed parameter state.
+The fingerprint checks the location, plugin name and parameter count.
+
+The edit reports values read back from FL. A partial failure can leave earlier
+changes applied. Some plugins round or reject values. Private controls that
+the plugin does not expose to FL require the plugin's own UI or preset workflow.
+Install and reload the updated controller script to enable these tools.
 
 ---
 

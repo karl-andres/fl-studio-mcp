@@ -17,7 +17,11 @@ import json
 import platform
 import time
 from pathlib import Path
+from threading import Lock
 from typing import Any
+
+# The MIDI bridge shares one command/response pair across tools in this server.
+_command_lock = Lock()
 
 
 def _get_fl_hardware_dir() -> Path:
@@ -160,6 +164,12 @@ class MIDIConnection:
         Raises:
             RuntimeError: If not connected or command fails
         """
+        with _command_lock:
+            return self._send_command(action, params, timeout)
+
+    def _send_command(
+        self, action: str, params: dict[str, Any] | None, timeout: float
+    ) -> dict[str, Any]:
         self.ensure_connected()
 
         # Prepare command
