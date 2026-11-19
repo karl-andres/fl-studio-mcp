@@ -18,6 +18,8 @@ Limitations:
 
 from __future__ import annotations
 
+import sys
+
 from fastmcp import FastMCP
 
 from fl_studio_mcp.tools import (
@@ -27,6 +29,8 @@ from fl_studio_mcp.tools import (
     register_plugin_tools,
     register_transport_tools,
 )
+from fl_studio_mcp.tools.plugin_editor import register_plugin_editor_tools
+from fl_studio_mcp.tools.wav_validation import register_wav_validation_tools
 from fl_studio_mcp.utils.connection import get_connection, reset_connection
 
 # Create the MCP server
@@ -134,11 +138,18 @@ def fl_connection_status() -> dict:
     }
 
 
+if sys.platform == "win32":
+    from fl_studio_mcp.tools.window_geometry import register_window_geometry_tools
+
+    register_window_geometry_tools(mcp)
+
 # Register all tools
 register_transport_tools(mcp)
 register_mixer_tools(mcp)
 register_channel_tools(mcp)
 register_plugin_tools(mcp)
+register_plugin_editor_tools(mcp)
+register_wav_validation_tools(mcp)
 register_piano_roll_tools(mcp)
 
 
