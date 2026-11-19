@@ -24,10 +24,27 @@ def _get_fl_hardware_dir() -> Path:
     """Get the FL Studio Hardware scripts directory."""
     system = platform.system()
 
-    if system in ("Darwin", "Windows"):
+    if system == "Windows":
+        # Windows may redirect Documents to OneDrive or another location.
+        # Read the configured shell folder rather than assuming a fixed path.
+        import os
+        import winreg
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+                documents = Path(os.path.expandvars(winreg.QueryValueEx(key, "Personal")[0]))
+        except (OSError, ValueError):
+            documents = Path.home() / "Documents"
+        base = documents / "Image-Line" / "FL Studio" / "Settings"
+        # Some FL Studio installations use OneDrive even when the Windows
+        # Documents registry value still points at the local profile.
+        onedrive = Path.home() / "OneDrive" / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+        if (onedrive / "Hardware" / "FLStudioMCP" / "device_FLStudioMCP.py").is_file():
+            base = onedrive
+    elif system == "Darwin":
         base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
     else:
-        # Linux fallback
         base = Path.home() / ".fl-studio" / "Settings"
 
     hardware_dir = base / "Hardware" / "FLStudioMCP"
