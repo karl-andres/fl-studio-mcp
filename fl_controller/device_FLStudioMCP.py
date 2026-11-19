@@ -466,7 +466,9 @@ def handle_channels_get_info(params: dict) -> dict:
         "index": index,
         "name": channels.getChannelName(index, use_global),
         "color": hex(channels.getChannelColor(index, use_global)),
-        "volume": channels.getChannelVolume(index, use_global),
+        # getChannelVolume's 2nd argument is mode (True returns dB), NOT useGlobalIndex:
+        # getChannelVolume(index, mode, useGlobalIndex).
+        "volume": channels.getChannelVolume(index, False, use_global),
         "pan": channels.getChannelPan(index, use_global),
         "pitch": channels.getChannelPitch(index, useGlobalIndex=use_global),
         "is_muted": channels.isChannelMuted(index, use_global) == 1,
@@ -504,7 +506,7 @@ def handle_channels_get_selected() -> dict:
         "channel": {
             "index": index,
             "name": channels.getChannelName(index, True),
-            "volume": channels.getChannelVolume(index, True),
+            "volume": channels.getChannelVolume(index, False, True),
             "pan": channels.getChannelPan(index, True),
             "is_muted": channels.isChannelMuted(index, True) == 1,
             "is_solo": channels.isChannelSolo(index, True) == 1,
@@ -544,9 +546,11 @@ def handle_channels_set_volume(params: dict) -> dict:
     """Set channel volume."""
     index = params.get("index", 0)
     volume = params.get("volume", 0.8)
-    channels.setChannelVolume(index, volume, True)
+    # setChannelVolume's 3rd argument is pickupMode, NOT useGlobalIndex:
+    # setChannelVolume(index, volume, pickupMode, useGlobalIndex).
+    channels.setChannelVolume(index, volume, midi.PIM_None, True)
     return {
-        "volume": channels.getChannelVolume(index, True),
+        "volume": channels.getChannelVolume(index, False, True),
         "channel_name": channels.getChannelName(index, True),
     }
 
@@ -555,7 +559,8 @@ def handle_channels_set_pan(params: dict) -> dict:
     """Set channel pan."""
     index = params.get("index", 0)
     pan = params.get("pan", 0.0)
-    channels.setChannelPan(index, pan, True)
+    # Same argument order as setChannelVolume: (index, pan, pickupMode, useGlobalIndex).
+    channels.setChannelPan(index, pan, midi.PIM_None, True)
     return {
         "pan": channels.getChannelPan(index, True),
         "channel_name": channels.getChannelName(index, True),
@@ -702,10 +707,13 @@ def handle_plugins_get_name(params: dict) -> dict:
     slot_index = params.get("slot_index", -1)
     use_global = params.get("use_global", True)
 
+    # getPluginName's 3rd argument is userName, NOT useGlobalIndex:
+    # getPluginName(index, slotIndex, userName, useGlobalIndex).
+    # userName=True returns the name the user gave the channel/slot instead.
     if slot_index >= 0:
-        name = plugins.getPluginName(index, slot_index, True)
+        name = plugins.getPluginName(index, slot_index, False, True)
     else:
-        name = plugins.getPluginName(index, -1, use_global)
+        name = plugins.getPluginName(index, -1, False, use_global)
 
     return {"name": name}
 
@@ -836,10 +844,10 @@ def handle_plugins_next_preset(params: dict) -> dict:
     use_global = params.get("use_global", True)
 
     if slot_index >= 0:
-        plugin_name = plugins.getPluginName(index, slot_index, True)
+        plugin_name = plugins.getPluginName(index, slot_index, False, True)
         plugins.nextPreset(index, slot_index, True)
     else:
-        plugin_name = plugins.getPluginName(index, -1, use_global)
+        plugin_name = plugins.getPluginName(index, -1, False, use_global)
         plugins.nextPreset(index, -1, use_global)
 
     return {"plugin_name": plugin_name}
@@ -852,10 +860,10 @@ def handle_plugins_prev_preset(params: dict) -> dict:
     use_global = params.get("use_global", True)
 
     if slot_index >= 0:
-        plugin_name = plugins.getPluginName(index, slot_index, True)
+        plugin_name = plugins.getPluginName(index, slot_index, False, True)
         plugins.prevPreset(index, slot_index, True)
     else:
-        plugin_name = plugins.getPluginName(index, -1, use_global)
+        plugin_name = plugins.getPluginName(index, -1, False, use_global)
         plugins.prevPreset(index, -1, use_global)
 
     return {"plugin_name": plugin_name}
@@ -867,9 +875,13 @@ def handle_plugins_get_color(params: dict) -> dict:
     slot_index = params.get("slot_index", -1)
     use_global = params.get("use_global", True)
 
+    # getColor's 3rd argument is the colour flag and its 4th is paramIndex
+    # (the stubs leave paramIndex out), NOT useGlobalIndex:
+    # getColor(index, slotIndex, flag, paramIndex, useGlobalIndex).
+    # useGlobalIndex is passed by name so it cannot land in paramIndex.
     if slot_index >= 0:
-        color = plugins.getColor(index, slot_index, True)
+        color = plugins.getColor(index, slot_index, midi.GC_BackgroundColor, useGlobalIndex=True)
     else:
-        color = plugins.getColor(index, -1, use_global)
+        color = plugins.getColor(index, -1, midi.GC_BackgroundColor, useGlobalIndex=use_global)
 
     return {"color": hex(color)}
