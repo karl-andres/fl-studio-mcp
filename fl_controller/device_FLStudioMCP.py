@@ -264,6 +264,7 @@ def handle_transport_get_status() -> dict:
         "is_recording": transport.isRecording() == 1,
         "position": transport.getSongPosHint(),
         "loop_mode": "song" if loop_mode == 1 else "pattern",
+        "tempo": mixer.getCurrentTempo() / 1000,
     }
 
 
