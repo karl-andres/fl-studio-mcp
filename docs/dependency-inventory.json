@@ -337,6 +337,13 @@
       "license": "BSD-3-Clause"
     },
     {
+      "package": "tinytag",
+      "version": "2.3.2",
+      "license": [
+        "License :: OSI Approved :: MIT License"
+      ]
+    },
+    {
       "package": "truststore",
       "version": "0.10.5",
       "license": "MIT"

@@ -12,9 +12,13 @@ import {
   type NoteEvent,
   type Section,
   type Song,
+  type AudioInfo,
+  reconcileTiming,
+  performanceComplete,
 } from "./model";
 import { call, saveLocal } from "./host";
 import "./style.css";
+import { ReferenceAudio } from "./ReferenceAudio";
 
 function restored() {
   try {
@@ -117,6 +121,10 @@ function App() {
       }),
     );
   }
+  const [reference, setReference] = useState<File | null>(null);
+  const [bundleDownloads, setBundleDownloads] = useState<
+    { download_url: string; filename: string }[]
+  >([]);
   const [downloadName, setDownloadName] = useState("songsflow.mid");
   const [song, setSong] = useState<Song>(restored);
   const current = useRef(song);
@@ -125,6 +133,7 @@ function App() {
   const [anchor, setAnchor] = useState<number | null>(0);
   const [root, setRoot] = useState("C"),
     [quality, setQuality] = useState("");
+  const operationActive = useRef(false);
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [playing, setPlaying] = useState(false);
@@ -200,14 +209,16 @@ function App() {
   }, []);
   function commit(next: Song) {
     try {
+      const reconciled = reconcileTiming(current.current, next);
       const valid = parseSong({
-        ...next,
+        ...reconciled,
         revision: current.current.revision + 1,
       });
       stop();
       current.current = valid;
       setSong(valid);
       setDownload("");
+      setBundleDownloads([]);
       setError("");
     } catch (e) {
       setError((e as Error).message);
@@ -232,6 +243,11 @@ function App() {
     });
   }
   async function run(action: () => Promise<void>) {
+    if (operationActive.current) {
+      setError("Finish the current operation first.");
+      return;
+    }
+    operationActive.current = true;
     setBusy(true);
     setError("");
     try {
@@ -239,8 +255,80 @@ function App() {
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      operationActive.current = false;
       setBusy(false);
     }
+  }
+  async function attachReference(file: File, info: AudioInfo) {
+    if (
+      current.current.audio &&
+      current.current.audio.sha256 !== info.sha256 &&
+      !(await confirmChange(
+        "Replace the reference recording and clear its timing marks?",
+      ))
+    )
+      return;
+    commit({
+      ...current.current,
+      audio: info,
+      timing_mode:
+        current.current.audio?.sha256 === info.sha256
+          ? current.current.timing_mode
+          : "performance",
+    });
+    setReference(file);
+  }
+  function rememberDownload(result: Record<string, unknown>) {
+    exportTokens.current = [
+      ...exportTokens.current,
+      result.token as string,
+    ].slice(-128);
+    void window.openai?.setWidgetState?.({
+      song: current.current,
+      dismissed: dismissed.current,
+      exportTokens: exportTokens.current,
+    });
+    return {
+      download_url: result.download_url as string,
+      filename: result.filename as string,
+    };
+  }
+  async function exportForFL() {
+    const snapshot = current.current;
+    if (!reference || !snapshot.audio)
+      throw Error(
+        "Attach the original reference audio before exporting all three files.",
+      );
+    if (!performanceComplete(snapshot))
+      throw Error("Mark every chord start and end before MIDI export.");
+    const links: { download_url: string; filename: string }[] = [];
+    setBundleDownloads([]);
+    for (const format of ["midi", "lyrics"]) {
+      const result = await call("export_song", { document: snapshot, format });
+      links.push(rememberDownload(result));
+      setBundleDownloads([...links]);
+    }
+    const ticket = await call("prepare_audio_export", {
+      metadata: snapshot.audio,
+    });
+    const response = await fetch(ticket.upload_url as string, {
+      method: "POST",
+      credentials: "omit",
+      redirect: "error",
+      headers: { "Content-Type": snapshot.audio.media_type },
+      signal: AbortSignal.timeout(75000),
+      body: reference,
+    });
+    if (!response.ok)
+      throw Error(
+        "The audio export failed. Your MIDI and lyrics links are available; retry audio export later.",
+      );
+    links.push(rememberDownload(await response.json()));
+    setBundleDownloads([...links]);
+    if (current.current.revision !== snapshot.revision)
+      setError(
+        "These files contain the draft captured when export started. Export again for your latest edits.",
+      );
   }
   async function preview() {
     if (playing) {
@@ -261,9 +349,17 @@ function App() {
         await ctx.close();
         return;
       }
+      if (result.timing_complete === false)
+        throw Error(
+          "Mark every chord start and end before preview or MIDI export.",
+        );
       const events = result.events as NoteEvent[];
       if (!events.length)
         throw Error("Add chords to your arranged sections first.");
+      const startSeconds = (event: NoteEvent) =>
+        event.start_seconds ?? (event.start * 60) / snapshot.tempo;
+      const durationSeconds = (event: NoteEvent) =>
+        event.duration_seconds ?? (event.beats * 60) / snapshot.tempo;
       setPlaying(true);
       let next = 0;
       const began = ctx.currentTime + 0.08;
@@ -274,13 +370,12 @@ function App() {
         if (audio.current !== ctx) return;
         while (
           next < events.length &&
-          began + (events[next].start * 60) / snapshot.tempo <
-            ctx.currentTime + 1
+          began + startSeconds(events[next]) < ctx.currentTime + 1
         ) {
           const index = next++,
             event = events[index],
-            when = began + (event.start * 60) / snapshot.tempo,
-            duration = (event.beats * 60) / snapshot.tempo;
+            when = began + startSeconds(event),
+            duration = durationSeconds(event);
           for (const note of event.notes) {
             const oscillator = ctx.createOscillator(),
               gain = ctx.createGain();
@@ -309,7 +404,7 @@ function App() {
           );
         }
         const last = events[events.length - 1],
-          end = began + ((last.start + last.beats) * 60) / snapshot.tempo;
+          end = began + startSeconds(last) + durationSeconds(last);
         if (ctx.currentTime >= end) stop();
         else timers.current.push(window.setTimeout(schedule, 100));
       }
@@ -450,6 +545,31 @@ function App() {
           <button onClick={dismiss}>Dismiss</button>
         </aside>
       )}
+      <ReferenceAudio
+        song={song}
+        disabled={busy}
+        previewPlaying={playing}
+        onPlay={stop}
+        file={reference}
+        onAttach={attachReference}
+        onChange={commit}
+        onError={setError}
+        onRemove={() =>
+          run(async () => {
+            if (
+              await confirmChange("Remove the reference and its timing marks?")
+            ) {
+              setReference(null);
+              commit({
+                ...current.current,
+                audio: null,
+                performance: [],
+                timing_mode: "beats",
+              });
+            }
+          })
+        }
+      />
       <nav className="sections" aria-label="Song sections">
         {song.sections.map((s) => (
           <button
@@ -632,7 +752,49 @@ function App() {
           )}
           {section.chords.map((c, index) => (
             <div className="chordrow" key={c.id}>
-              <b>{c.symbol}</b>
+              <label>
+                Chord
+                <select
+                  aria-label={`Chord ${index + 1} symbol`}
+                  value={c.symbol}
+                  onChange={(e) =>
+                    updateSection({
+                      chords: section.chords.map((x) =>
+                        x.id === c.id ? { ...x, symbol: e.target.value } : x,
+                      ),
+                    })
+                  }
+                >
+                  {[
+                    ...new Set([
+                      c.symbol,
+                      ...[
+                        "C",
+                        "C#",
+                        "Db",
+                        "D",
+                        "D#",
+                        "Eb",
+                        "E",
+                        "F",
+                        "F#",
+                        "Gb",
+                        "G",
+                        "G#",
+                        "Ab",
+                        "A",
+                        "A#",
+                        "Bb",
+                        "B",
+                      ].flatMap((root) =>
+                        ["", "m", "7", "m7"].map((quality) => root + quality),
+                      ),
+                    ]),
+                  ].map((symbol) => (
+                    <option key={symbol}>{symbol}</option>
+                  ))}
+                </select>
+              </label>
               <label>
                 Beats
                 <NumberField
@@ -760,8 +922,12 @@ function App() {
             : `${arranged.length} chords · ${song.arrangement.length} sections`}
         </div>
       </section>
+
       <footer>
         <div className="actions">
+          <button disabled={busy} onClick={() => void run(exportForFL)}>
+            Export for FL Studio
+          </button>
           <button
             disabled={!window.openai?.sendFollowUpMessage || busy}
             onClick={() =>
@@ -786,6 +952,10 @@ function App() {
             disabled={busy}
             onClick={() =>
               void run(async () => {
+                if (!performanceComplete(song))
+                  throw Error(
+                    "Mark every chord start and end before MIDI export.",
+                  );
                 const result = await call("export_song", {
                   document: song,
                   format: "midi",
@@ -835,6 +1005,7 @@ function App() {
             <input
               type="file"
               accept=".json,application/json"
+              disabled={busy}
               onChange={(e) =>
                 void run(async () => {
                   const file = e.target.files?.[0];
@@ -849,6 +1020,7 @@ function App() {
                   if (
                     await confirmChange("Replace your draft with this backup?")
                   ) {
+                    setReference(null);
                     commit(result.song as Song);
                     setActive(parsed.sections[0].id);
                   }
@@ -857,6 +1029,32 @@ function App() {
             />
           </label>
         </div>
+        {bundleDownloads.length > 0 && (
+          <div className="download" aria-label="FL Studio export files">
+            <p>
+              Download each file. Links expire in 15 minutes. Place audio and
+              MIDI at the same origin in FL Studio, with project tempo matching
+              this export.
+            </p>
+            {bundleDownloads.map((link) => (
+              <p key={link.download_url}>
+                <a
+                  href={link.download_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => {
+                    if (window.openai?.openExternal) {
+                      event.preventDefault();
+                      window.openai.openExternal({ href: link.download_url });
+                    }
+                  }}
+                >
+                  Download {link.filename}
+                </a>
+              </p>
+            ))}
+          </div>
+        )}
         {download && (
           <p className="download">
             <a
@@ -887,9 +1085,11 @@ function App() {
           <p>
             Your lyrics are sent to this app’s server only for requested
             validation, preview, revision, or export. There is no song database
-            or analytics. MIDI downloads live in server memory for at most 15
-            minutes, plus up to 30 seconds for cleanup; restarting the server
-            deletes them. Anyone with a download link can use it until expiry.
+            or analytics. Reference audio is uploaded only for explicit export,
+            with no transcription or chord detection. Export files live in
+            server memory for at most 15 minutes, plus up to 30 seconds for
+            cleanup; restarting the server deletes them. Anyone with a download
+            link can use it until expiry.
           </p>
           <p>
             ChatGPT processes conversation and widget data under OpenAI’s
@@ -900,6 +1100,7 @@ function App() {
         </details>
         <button
           className="quiet danger"
+          disabled={busy}
           onClick={() =>
             void run(async () => {
               if (
@@ -907,15 +1108,22 @@ function App() {
                   "Clear this draft and revoke its active download links? ChatGPT conversation and downloaded backups are not deleted.",
                 )
               ) {
-                if (exportTokens.current.length)
-                  await call("revoke_exports", {
-                    tokens: exportTokens.current,
-                  });
-                exportTokens.current = [];
+                const tokens = [...exportTokens.current];
                 stop();
+                setReference(null);
                 commit(fresh());
                 setActive("verse");
                 dismiss();
+                if (tokens.length) {
+                  try {
+                    await call("revoke_exports", { tokens });
+                  } catch {
+                    throw Error(
+                      "Draft cleared. Download links could not be revoked; they expire within 15 minutes.",
+                    );
+                  }
+                }
+                exportTokens.current = [];
               }
             })
           }

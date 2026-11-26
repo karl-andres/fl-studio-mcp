@@ -540,6 +540,9 @@ MIT
 
 This fork also includes an OpenAI Apps SDK lyrics-and-chords editor with piano-like preview,
 repeatable sections, JSON song backups, and standard MIDI export for FL Studio.
+Attach reference audio, tap or edit chord timestamps to follow your performance,
+and export MIDI, annotated lyric text, and the unchanged recording. No automatic
+transcription or chord detection is performed.
 It runs as a separate HTTP MCP server and does not expose the desktop control tools.
 See [SongsFlow setup and security](docs/SONGSFLOW.md) and the
 [privacy notice](docs/PRIVACY.md) for installation, tool contracts and release checks.

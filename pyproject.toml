@@ -32,6 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 app = [
+    "tinytag>=2.3.2,<3",
     "fastmcp>=4.2.6,<5; python_version >= '3.11'",
     "starlette>=1.10,<2; python_version >= '3.11'",
     "uvicorn>=0.54,<1; python_version >= '3.11'",

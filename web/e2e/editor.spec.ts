@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     let saved: unknown;
+    (window as unknown as { toolCalls: string[] }).toolCalls = [];
     window.openai = {
       theme: "light",
       setWidgetState: async (s) => {
@@ -9,6 +10,7 @@ test.beforeEach(async ({ page }) => {
         (window as unknown as { saved: unknown }).saved = s;
       },
       callTool: async (name, args) => {
+        (window as unknown as { toolCalls: string[] }).toolCalls.push(name);
         const song = args.document as {
           sections: { chords: { symbol: string; beats: number }[] }[];
         };
@@ -30,8 +32,20 @@ test.beforeEach(async ({ page }) => {
         if (name === "export_song")
           return {
             structuredContent: {
-              download_url: "https://example.com/downloads/test",
-              token: "test",
+              download_url: `https://example.com/downloads/${args.format ?? "midi"}`,
+              filename:
+                args.format === "lyrics"
+                  ? "songsflow.lyrics.txt"
+                  : args.format === "json"
+                    ? "songsflow.song.json"
+                    : "songsflow.mid",
+              token: "test-" + (args.format ?? "midi"),
+            },
+          };
+        if (name === "prepare_audio_export")
+          return {
+            structuredContent: {
+              upload_url: "https://example.com/audio-exports/ticket",
             },
           };
         return { structuredContent: { revoked: true } };
@@ -144,14 +158,14 @@ test("imports a backup only after confirmation and rejects oversized files", asy
     ],
     arrangement: ["v"],
   };
-  await page.locator("input[type=file]").setInputFiles({
+  await page.locator('input[accept=".json,application/json"]').setInputFiles({
     name: "song.json",
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(song)),
   });
   await page.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(page.getByLabel("Song title")).toHaveValue("Imported song");
-  await page.locator("input[type=file]").setInputFiles({
+  await page.locator('input[accept=".json,application/json"]').setInputFiles({
     name: "large.json",
     mimeType: "application/json",
     buffer: Buffer.alloc(1_048_577),
@@ -169,4 +183,166 @@ test("edits tempo and durations without rejecting intermediate keystrokes", asyn
   await page.getByLabel("C duration").fill("1.5");
   await page.getByLabel("C duration").blur();
   await expect(page.getByLabel("C duration")).toHaveValue("1.5");
+});
+
+function referenceWav() {
+  const data = Buffer.alloc(44 + 8 * 8000 * 2);
+  data.write("RIFF", 0);
+  data.writeUInt32LE(data.length - 8, 4);
+  data.write("WAVEfmt ", 8);
+  data.writeUInt32LE(16, 16);
+  data.writeUInt16LE(1, 20);
+  data.writeUInt16LE(1, 22);
+  data.writeUInt32LE(8000, 24);
+  data.writeUInt32LE(16000, 28);
+  data.writeUInt16LE(2, 32);
+  data.writeUInt16LE(16, 34);
+  data.write("data", 36);
+  data.writeUInt32LE(data.length - 44, 40);
+  return data;
+}
+test("reference audio, live marks, corrections, repeated chords and three-file export", async ({
+  page,
+}) => {
+  const data = referenceWav();
+  let audioUploads = 0;
+  await page.route(
+    "https://example.com/audio-exports/ticket",
+    async (route) => {
+      const headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST",
+        "Access-Control-Allow-Headers": "Content-Type",
+      };
+      if (route.request().method() === "OPTIONS") {
+        await route.fulfill({ status: 204, headers });
+        return;
+      }
+      expect(route.request().postDataBuffer()).toEqual(data);
+      audioUploads++;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers,
+        body: JSON.stringify({
+          download_url: "https://example.com/downloads/audio",
+          filename: "reference.wav",
+          token: "audio-test",
+        }),
+      });
+    },
+  );
+  await page.getByLabel("Lyrics Select").fill("Hello world");
+  await page.getByRole("button", { name: "+ Add C", exact: true }).click();
+  await page.getByRole("button", { name: "+ Add C", exact: true }).click();
+  await page.getByLabel("Add arrangement section").selectOption("verse");
+  await page.getByLabel("Attach reference audio").setInputFiles({
+    name: "reference.wav",
+    mimeType: "audio/wav",
+    buffer: data,
+  });
+  await expect(page.getByLabel("Reference playback")).toBeVisible();
+  await expect(page.getByLabel("Chord timing mode")).toHaveValue("performance");
+  expect(audioUploads).toBe(0);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { toolCalls: string[] }).toolCalls,
+    ),
+  ).toEqual([]);
+  const playback = page.getByLabel("Reference playback");
+  expect(await playback.evaluate((el: HTMLAudioElement) => el.paused)).toBe(
+    true,
+  );
+  await playback.evaluate(async (el: HTMLAudioElement) => {
+    await el.play();
+    el.pause();
+  });
+  for (const at of [0.75, 1.5, 3.1, 5.2]) {
+    await playback.evaluate((el: HTMLAudioElement, at) => {
+      el.currentTime = at;
+    }, at);
+    await page.getByRole("button", { name: /Mark next chord/ }).click();
+  }
+  await playback.evaluate((el: HTMLAudioElement) => {
+    el.currentTime = 7.7;
+  });
+  await page
+    .getByRole("button", { name: "End progression", exact: true })
+    .click();
+  await expect(page.getByLabel("Chord 1 start seconds")).toHaveValue("0.750");
+  await page.getByLabel("Chord 1 end seconds").fill("1.2");
+  await page.getByLabel("Chord 1 end seconds").blur();
+  await expect(page.getByLabel("Chord 1 end seconds")).toHaveValue("1.200");
+  await page.getByLabel("Chord 1 symbol").selectOption("Cm");
+  await expect(page.getByLabel("Chord 1 start seconds")).toHaveValue("0.750");
+  await page
+    .getByRole("button", { name: "Export for FL Studio", exact: true })
+    .click();
+  await expect(
+    page.getByRole("link", { name: "Download songsflow.mid", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", {
+      name: "Download songsflow.lyrics.txt",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Download reference.wav", exact: true }),
+  ).toBeVisible();
+  expect(audioUploads).toBe(1);
+  await page.waitForTimeout(350);
+  const saved = await page.evaluate(
+    () =>
+      (window as unknown as { saved: { song: Record<string, unknown> } }).saved
+        .song,
+  );
+  expect(Object.keys(saved.audio as object).sort()).toEqual([
+    "duration",
+    "media_type",
+    "name",
+    "sha256",
+    "size",
+  ]);
+  // Reopening a backup preserves marks, but intentionally drops the in-memory audio File.
+  await page.locator('input[accept=".json,application/json"]').setInputFiles({
+    name: "backup.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(saved)),
+  });
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(page.getByText(/^Reattach the same audio file/)).toBeVisible();
+  await expect(page.getByLabel("Chord 1 start seconds")).toHaveValue("0.750");
+  await page.getByLabel("Attach reference audio").setInputFiles({
+    name: "reference.wav",
+    mimeType: "audio/wav",
+    buffer: data,
+  });
+  await expect(page.getByLabel("Reference playback")).toBeVisible();
+  await expect(page.getByLabel("Chord 1 start seconds")).toHaveValue("0.750");
+  // A structural arrangement change invalidates the marks, not the attached recording.
+  await page.getByLabel("Add arrangement section").selectOption("verse");
+  await expect(page.getByLabel("Chord 1 start seconds")).toHaveValue("");
+  await expect(page.getByLabel("Reference playback")).toBeVisible();
+});
+test("invalid audio does not replace the draft and incomplete timing blocks MIDI", async ({
+  page,
+}) => {
+  await page.getByLabel("Attach reference audio").setInputFiles({
+    name: "fake.wav",
+    mimeType: "audio/wav",
+    buffer: Buffer.from("not audio"),
+  });
+  await expect(page.getByRole("alert")).toContainText("Invalid or unsupported");
+  await page.getByLabel("Attach reference audio").setInputFiles({
+    name: "reference.wav",
+    mimeType: "audio/wav",
+    buffer: referenceWav(),
+  });
+  await expect(page.getByLabel("Reference playback")).toBeVisible();
+  await page.getByRole("button", { name: "+ Add C", exact: true }).click();
+  await page.getByRole("button", { name: "Export MIDI", exact: false }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Mark every chord start and end",
+  );
 });

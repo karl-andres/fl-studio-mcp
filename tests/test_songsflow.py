@@ -147,6 +147,7 @@ def test_mcp_tool_flow():
                 "propose_song",
                 "export_song",
                 "revoke_exports",
+                "prepare_audio_export",
             }
             assert all(not name.startswith("fl_") for name in names)
             tool = next(t for t in tools if t.name == "open_song")

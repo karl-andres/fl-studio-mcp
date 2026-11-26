@@ -6,6 +6,9 @@ export type Result = {
 };
 type Host = {
   theme?: string;
+  getFileDownloadUrl?: (args: {
+    fileId: string;
+  }) => Promise<{ downloadUrl: string }>;
   toolOutput?: Record<string, unknown>;
   widgetState?: { song?: Song; dismissed?: string[]; exportTokens?: string[] };
   setWidgetState?: (state: unknown) => Promise<void>;
