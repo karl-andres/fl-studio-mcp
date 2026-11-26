@@ -535,3 +535,11 @@ Just a heads-up: this project doesn't have a proper test suite, CI, or review pr
 ## License
 
 MIT
+
+## SongsFlow ChatGPT songwriting app
+
+This fork also includes an OpenAI Apps SDK lyrics-and-chords editor with piano-like preview,
+repeatable sections, JSON song backups, and standard MIDI export for FL Studio.
+It runs as a separate HTTP MCP server and does not expose the desktop control tools.
+See [SongsFlow setup and security](docs/SONGSFLOW.md) and the
+[privacy notice](docs/PRIVACY.md) for installation, tool contracts and release checks.

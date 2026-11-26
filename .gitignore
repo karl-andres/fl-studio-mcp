@@ -1,7 +1,12 @@
 .venv/
 .claude/
-uv.lock
 fl_controller/__pycache__/
 src/fl_studio_mcp/__pycache__/
 src/fl_studio_mcp/tools/__pycache__
 src/fl_studio_mcp/utils/__pycache__
+web/node_modules/
+src/songsflow/widget/
+web/test-results/
+web/playwright-report/
+**/__pycache__/
+.pytest_cache/

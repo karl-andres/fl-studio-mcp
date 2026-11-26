@@ -31,6 +31,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+app = [
+    "fastmcp>=4.2.6,<5; python_version >= '3.11'",
+    "starlette>=1.10,<2; python_version >= '3.11'",
+    "uvicorn>=0.54,<1; python_version >= '3.11'",
+]
 dev = [
     "fl-studio-api-stubs>=37.0",
     "pytest>=8.0",
@@ -39,15 +44,18 @@ dev = [
 
 [project.scripts]
 fl-studio-mcp = "fl_studio_mcp.server:main"
+songsflow-app = "songsflow.server:main"
+
+[tool.hatch.build]
+artifacts = ["src/songsflow/widget/**"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/fl_studio_mcp"]
+packages = ["src/fl_studio_mcp", "src/songsflow"]
 
 [tool.uv]
-# cryptography >=49 ships macOS wheels for arm64 only; on Intel Macs it falls
-# back to a source build (needs Rust + OpenSSL). 48.x still has universal2
-# wheels and satisfies joserfc's cryptography>=45.0.1 requirement.
-constraint-dependencies = ["cryptography<49"]
+# Older versions have known security advisories. Intel macOS may need Rust/OpenSSL
+# to build a current release instead of using the old universal2 wheel.
+constraint-dependencies = ["cryptography>=50"]
 
 [dependency-groups]
 dev = [
