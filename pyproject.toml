@@ -39,6 +39,7 @@ dev = [
 
 [project.scripts]
 fl-studio-mcp = "fl_studio_mcp.server:main"
+fl-studio-mcp-preview = "fl_studio_mcp.preview:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fl_studio_mcp"]

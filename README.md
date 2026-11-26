@@ -535,3 +535,17 @@ Just a heads-up: this project doesn't have a proper test suite, CI, or review pr
 ## License
 
 MIT
+
+## Read-only MCP preview
+
+With FL Studio open and the MIDI controller configured as above, register the
+preview in Codex CLI from this checkout:
+
+```sh
+codex mcp add fl-studio-preview -- uv run --directory "$PWD" fl-studio-mcp-preview
+```
+
+Ask Codex to list the open project's mixer tracks or show playback status.
+The preview exposes two read tools over local stdio. Run only one MCP server
+against the same controller at a time because the MIDI bridge shares command
+and response files between processes.
