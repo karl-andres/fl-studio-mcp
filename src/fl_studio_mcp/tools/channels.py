@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from fl_studio_mcp.utils.validation import rgb_error
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -286,6 +288,10 @@ def register_channel_tools(mcp: FastMCP) -> None:
             green: Green component (0-255)
             blue: Blue component (0-255)
         """
+        err = rgb_error(red, green, blue)
+        if err:
+            return err
+
         conn = get_connection()
         result = conn.send_command("channels.setColor", {
             "index": index,
