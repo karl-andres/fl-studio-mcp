@@ -27,6 +27,8 @@ from pathlib import Path
 import channels
 import midi
 import mixer
+import patterns
+import playlist
 import plugins
 import transport
 
@@ -228,6 +230,16 @@ def dispatch_command(action: str, params: dict) -> dict:
         return handle_plugins_prev_preset(params)
     elif action == "plugins.getColor":
         return handle_plugins_get_color(params)
+
+    # Pattern and playlist commands
+    elif action == "patterns.getAll":
+        return handle_patterns_get_all()
+    elif action == "patterns.set":
+        return handle_patterns_set(params)
+    elif action == "playlist.getTracks":
+        return handle_playlist_get_tracks()
+    elif action == "playlist.setTrack":
+        return handle_playlist_set_track(params)
 
     else:
         return {"error": f"Unknown action: {action}"}
@@ -437,6 +449,45 @@ def handle_mixer_set_track_color(params: dict) -> dict:
     color = (r << 16) | (g << 8) | b
     mixer.setTrackColor(track, color)
     return {"color": f"RGB({r}, {g}, {b})"}
+
+
+def _hex(color: int) -> str:
+    return f"#{color & 0xFFFFFF:06x}"
+
+
+def _rgb(params: dict) -> int:
+    return (params["r"] << 16) | (params["g"] << 8) | params["b"]
+
+
+def handle_patterns_get_all() -> dict:
+    """List all patterns (1-based) with name and color."""
+    return {"patterns": [
+        {"index": i, "name": patterns.getPatternName(i), "color": _hex(patterns.getPatternColor(i))}
+        for i in range(1, patterns.patternCount() + 1)
+    ]}
+
+
+def handle_patterns_set(params: dict) -> dict:
+    """Set a pattern's name and color."""
+    patterns.setPatternName(params["index"], params["name"])
+    patterns.setPatternColor(params["index"], _rgb(params))
+    return {}
+
+
+def handle_playlist_get_tracks() -> dict:
+    """List playlist tracks (1-based) that have a custom name."""
+    return {"tracks": [
+        {"index": i, "name": playlist.getTrackName(i), "color": _hex(playlist.getTrackColor(i))}
+        for i in range(1, playlist.trackCount() + 1)
+        if playlist.getTrackName(i) != f"Track {i}"
+    ]}
+
+
+def handle_playlist_set_track(params: dict) -> dict:
+    """Set a playlist track's name and color."""
+    playlist.setTrackName(params["index"], params["name"])
+    playlist.setTrackColor(params["index"], _rgb(params))
+    return {}
 
 
 def handle_mixer_set_stereo_sep(params: dict) -> dict:
