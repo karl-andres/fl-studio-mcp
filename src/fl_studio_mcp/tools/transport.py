@@ -62,7 +62,7 @@ def register_transport_tools(mcp: FastMCP) -> None:
         """Get current transport status including playback and recording state.
 
         Returns information about whether FL Studio is playing, recording,
-        the current position, and loop mode.
+        the current position, loop mode, and tempo (BPM).
         """
         conn = get_connection()
         result = conn.send_command("transport.getStatus")
@@ -75,6 +75,7 @@ def register_transport_tools(mcp: FastMCP) -> None:
             "is_recording": result.get("is_recording", False),
             "position": result.get("position", ""),
             "loop_mode": result.get("loop_mode", "pattern"),
+            "tempo": result.get("tempo"),
         }
 
     @mcp.tool()
