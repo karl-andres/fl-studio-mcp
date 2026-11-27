@@ -19,6 +19,7 @@ Communication flow:
 """
 
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -88,6 +89,7 @@ def OnIdle():
 def execute_pending_command():
     """Read command from JSON file, execute it, and write response."""
     response = {"success": False, "error": None}
+    editor_request_id = None
 
     try:
         # Read command file
@@ -101,6 +103,8 @@ def execute_pending_command():
 
         action = command.get("action", "")
         params = command.get("params", {})
+        if isinstance(action, str) and action.startswith("plugins.editor"):
+            editor_request_id = params.get("request_id")
 
         # Execute command and get result
         result = dispatch_command(action, params)
@@ -111,6 +115,8 @@ def execute_pending_command():
     except Exception as e:
         response["error"] = f"Error executing command: {e}"
 
+    if editor_request_id is not None:
+        response["editor_request_id"] = editor_request_id
     write_response(response)
 
 
@@ -228,9 +234,153 @@ def dispatch_command(action: str, params: dict) -> dict:
         return handle_plugins_prev_preset(params)
     elif action == "plugins.getColor":
         return handle_plugins_get_color(params)
+    elif action == "plugins.editorInstances":
+        return plugin_editor_instances(params)
+    elif action == "plugins.editorRead":
+        return plugin_editor_read(params)
+    elif action == "plugins.editorWrite":
+        return plugin_editor_write(params)
 
     else:
         return {"error": f"Unknown action: {action}"}
+
+
+PLUGIN_EDITOR_PAGE_SIZE = 128
+PLUGIN_EDITOR_MAX_EDITS = 64
+MIXER_EFFECT_SLOTS = 10
+
+
+def plugin_editor_page_end(start, stop):
+    if type(start) is not int or not 0 <= start <= stop:
+        raise ValueError("Invalid plugin editor page")
+    return min(start + PLUGIN_EDITOR_PAGE_SIZE, stop)
+
+
+def plugin_editor_instances(params):
+    channel_count = channels.channelCount(True)
+    total = channel_count + mixer.trackCount() * MIXER_EFFECT_SLOTS
+    start = params.get("start", 0)
+    end = plugin_editor_page_end(start, total)
+    instances = []
+    for location in range(start, end):
+        if location < channel_count:
+            index, slot = location, -1
+            target = f"channel:{index}"
+        else:
+            index, slot = divmod(location - channel_count, MIXER_EFFECT_SLOTS)
+            target = f"mixer:{index}:{slot}"
+        if plugins.isValid(index, slot, True):
+            instances.append({
+                "target": target,
+                "plugin_name": plugins.getPluginName(index, slot, False, True),
+            })
+    return {"instances": instances, "next_start": end if end < total else None}
+
+
+def plugin_editor_metadata(params):
+    index, slot = params["index"], params["slot"]
+    if type(slot) is not int or not -1 <= slot < MIXER_EFFECT_SLOTS:
+        raise ValueError("Invalid plugin slot")
+    count = channels.channelCount(True) if slot == -1 else mixer.trackCount()
+    if type(index) is not int or not 0 <= index < count or not plugins.isValid(index, slot, True):
+        raise ValueError("No plugin at the requested location")
+    return {
+        "plugin_name": plugins.getPluginName(index, slot, False, True),
+        "parameter_count": plugins.getParamCount(index, slot, True),
+    }
+
+
+def plugin_editor_parameter(parameter, index, slot, include_text=False):
+    name = plugins.getParamName(parameter, index, slot, True)
+    value = plugins.getParamValue(parameter, index, slot, True)
+    text = None
+    if include_text:
+        try:
+            text = plugins.getParamValueString(parameter, index, slot, True) or None
+        except (RuntimeError, TypeError, ValueError):
+            pass  # A display string is optional for host and plugin implementations.
+    return {"index": parameter, "name": name, "value": value, "value_text": text}
+
+
+def plugin_editor_read(params):
+    metadata = plugin_editor_metadata(params)
+    if "expected_metadata" in params and params["expected_metadata"] != metadata:
+        raise ValueError("Plugin metadata changed; describe the target again")
+    index, slot = params["index"], params["slot"]
+    count = metadata["parameter_count"]
+    if "indices" in params:
+        indices = params["indices"]
+        if not isinstance(indices, list) or len(indices) > PLUGIN_EDITOR_PAGE_SIZE or any(
+            type(i) is not int or not 0 <= i < count for i in indices
+        ):
+            raise ValueError("Invalid parameter indices")
+        return {
+            "metadata": metadata,
+            "parameters": [
+                plugin_editor_parameter(i, index, slot, params.get("include_text", False))
+                for i in indices
+            ],
+        }
+    start = params.get("start", 0)
+    end = plugin_editor_page_end(start, count)
+    return {
+        "metadata": metadata,
+        "names": [plugins.getParamName(i, index, slot, True) for i in range(start, end)],
+        "next_start": end if end < count else None,
+    }
+
+
+def plugin_editor_value(value):
+    return type(value) in (float, int) and 0 <= value <= 1
+
+
+def plugin_editor_write(params):
+    import general
+
+    metadata = plugin_editor_metadata(params)
+    if params["expected_metadata"] != metadata:
+        raise ValueError("Plugin metadata changed; describe the target again")
+    edits = params["edits"]
+    if not isinstance(edits, list) or not 1 <= len(edits) <= PLUGIN_EDITOR_MAX_EDITS:
+        raise ValueError("Expected 1..64 parameter edits")
+    index, slot = params["index"], params["slot"]
+    seen = set()
+    for edit in edits:
+        parameter = edit["index"]
+        if (
+            type(parameter) is not int
+            or not 0 <= parameter < metadata["parameter_count"]
+            or parameter in seen
+            or not plugin_editor_value(edit["value"])
+            or not plugin_editor_value(edit["before"])
+        ):
+            raise ValueError("Invalid or duplicate parameter edit")
+        seen.add(parameter)
+        current = plugin_editor_parameter(parameter, index, slot)
+        if not current["name"] or current["name"] != edit["name"] or not math.isclose(
+            current["value"], edit["before"], abs_tol=1e-5
+        ):
+            raise ValueError("Parameter metadata or value changed before the edit")
+
+    submitted = []
+    changed = [
+        edit for edit in edits if not math.isclose(edit["value"], edit["before"], abs_tol=1e-5)
+    ]
+    for edit in changed:
+        parameter = edit["index"]
+        try:
+            if not general.safeToEdit():
+                raise RuntimeError("FL Studio reported it was unsafe to edit")
+            current = plugin_editor_parameter(parameter, index, slot)
+            if current["name"] != edit["name"] or not math.isclose(
+                current["value"], edit["before"], abs_tol=1e-5
+            ):
+                raise RuntimeError("Parameter metadata or value changed during the edit")
+            submitted.append(parameter)
+            plugins.setParamValue(edit["value"], parameter, index, slot, midi.PIM_None, True)
+        except Exception as exc:
+            return {"success": False, "error": str(exc), "submitted": submitted}
+    return {"submitted": submitted}
 
 
 # =============================================================================

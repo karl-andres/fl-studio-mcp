@@ -80,6 +80,18 @@ https://github.com/user-attachments/assets/c2b1a5e7-1640-41fa-82bc-18ca7cbae9e8
 - Navigate presets (next/previous)
 - Query plugin info
 
+The generic parameter editor does not open the plugin, switch focus, or send
+mouse or keyboard input. It works only with parameters FL exposes.
+
+#### Window geometry (Windows)
+
+`fl_list_windows` reports the handle, process ID, title and physical screen
+bounds of supported visible FL Studio forms. Pass these observations plus a new
+top-left position to `fl_move_window`. Supply both size fields to request a
+resize. The tool calls Windows directly without activating the form or sending
+input. FL may clamp a docked form; check `verified_geometry` and the returned
+bounds before relying on the requested position.
+
 ### Piano Roll Control
 
 - **Add notes** to the piano roll with precise timing
@@ -335,6 +347,9 @@ fl-studio-mcp
 | `fl_get_plugin_name` | Get plugin name |
 | `fl_get_plugin_param_count` | Get parameter count |
 | `fl_get_plugin_params` | List all parameters |
+| `fl_list_plugin_instances` | Find loaded Channel Rack instruments and Mixer effects |
+| `fl_describe_plugin` | Search a plugin's parameters and read their values |
+| `fl_edit_plugin` | Edit parameters by name or index with readback |
 | `fl_get_plugin_param_value` | Get parameter value |
 | `fl_set_plugin_param_value` | Set parameter value |
 | `fl_get_preset_count` | Get preset count |
@@ -358,6 +373,19 @@ fl-studio-mcp
 ---
 
 ## Example Workflows
+
+### Checking a WAV Render
+
+Pass a completed local WAV to `fl_verify_audio_output(audio_path, expected_duration)`.
+`expected_duration` is optional and measured in seconds; the comparison allows
+one sample frame of rounding. The tool reports peak, RMS and DC offset per
+channel, and counts full-scale and nonfinite samples. A silent file or an
+incomplete scan cannot pass. If `max_frames` truncates the scan, the metrics
+describe only the scanned prefix. The tool also caps each scan at 50 million
+samples across all channels.
+
+The check reads PCM and IEEE float RIFF/WAVE files, with no FL connection or
+project writes. It checks the file and its signal, not the quality of the mix.
 
 ### Adjusting a Mix
 
@@ -388,6 +416,24 @@ fl-studio-mcp
 ```text
 "List the parameters of the plugin on channel 0 and set the filter cutoff to 50%"
 ```
+
+For any loaded instrument or effect, use `fl_list_plugin_instances` to find its
+target. `channel:13` is global Channel Rack index 13 and `mixer:23:0` is the first
+effect slot on mixer track 23. `fl_describe_plugin` lists matching parameter
+names, indices, and values. Set `include_text` to read labels supplied by the plugin
+and follow `next_start` for more results.
+
+Pass the returned fingerprint to `fl_edit_plugin`, along with edits such as
+`{"parameter": "Mix", "value": 0.3}`. Use an index for duplicate names and
+`dry_run: true` to preview. Values use FL's normalized 0–1 range. Optional
+`expected_name` and `expected_value` fields guard the observed parameter state.
+The fingerprint checks the location, plugin name and parameter count.
+
+The edit reports values read back from FL. A partial failure can leave earlier
+changes applied. Some plugins round or reject values. Private controls that
+the plugin does not expose to FL are outside this tool's scope. The tool does
+not fall back to clicking the plugin editor or changing its preset.
+Install and reload the updated controller script to enable these tools.
 
 ---
 
