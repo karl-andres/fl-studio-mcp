@@ -63,6 +63,9 @@ https://github.com/user-attachments/assets/c2b1a5e7-1640-41fa-82bc-18ca7cbae9e8
 - Arm tracks for recording
 - Set track names and colors
 - Stereo separation control
+- **Load effects** into mixer slots (any Fruity, VST or VST3 effect FL knows about)
+- Read/set each effect slot's **Mix knob (dry/wet)** and turn slots on/off
+- **Routing**: send a track to another (bus, FX return, sidechain) with a send level, or route it to one track only
 
 ### Channel Rack Control
 
@@ -75,6 +78,7 @@ https://github.com/user-attachments/assets/c2b1a5e7-1640-41fa-82bc-18ca7cbae9e8
 
 ### Plugin Control
 
+- Search installed plugins (FL Studio's Plugin database)
 - List plugin parameters
 - Get/set parameter values
 - Navigate presets (next/previous)
@@ -93,7 +97,7 @@ https://github.com/user-attachments/assets/c2b1a5e7-1640-41fa-82bc-18ca7cbae9e8
 
 ## Limitations
 
-> **Cannot load plugins** — The FL Studio scripting API does not support loading new VST/AU plugins. You can only control parameters of plugins that are already loaded in your project.
+> **Cannot load instruments** — Effects can be loaded into mixer slots (`fl_load_effect`), but FL Studio's scripting API has no way to add a generator to the Channel Rack. Instruments have to be loaded by hand; after that their parameters can be controlled. Effect loading goes through the call FL's own Mackie script uses to drop Edison on a track, and needs the Plugin database on the same drive as FL Studio.
 
 > **No pattern management (yet)** — The server can write notes and step-sequencer steps into a pattern, but it has no tools to create, switch, rename, or clone patterns. Everything goes into whichever pattern is currently selected in FL Studio, so pick or create the pattern yourself before asking for notes. (FL Studio's scripting API does support this through the `patterns` module, so it could be added.)
 
@@ -302,7 +306,13 @@ fl-studio-mcp
 | `fl_arm_track` | Arm track for recording |
 | `fl_set_track_name` | Rename track |
 | `fl_set_track_color` | Set track color |
-| `fl_set_stereo_separation` | Adjust stereo width |
+| `fl_set_stereo_separation` | Adjust stereo width (-1 = 100% separated, +1 = 100% merged/mono) |
+| `fl_get_track_fx` | List a track's effects with each slot's Mix (dry/wet) and on/off state |
+| `fl_load_effect` | Load an effect into the next free slot of a track |
+| `fl_set_fx_mix` | Set an effect slot's Mix knob (dry/wet) |
+| `fl_set_fx_enabled` | Turn an effect slot on or off |
+| `fl_get_track_routing` | Show where a track sends to (with levels) and what feeds into it |
+| `fl_route_track` | Create/remove a route between two tracks, set its send level |
 
 ### Channels
 
@@ -331,6 +341,7 @@ fl-studio-mcp
 
 | Tool | Description |
 |------|-------------|
+| `fl_find_plugins` | Search installed plugins by name |
 | `fl_is_plugin_valid` | Check if plugin exists |
 | `fl_get_plugin_name` | Get plugin name |
 | `fl_get_plugin_param_count` | Get parameter count |
@@ -363,6 +374,12 @@ fl-studio-mcp
 
 ```text
 "Set the volume of mixer track 1 to 80% and pan it slightly left"
+```
+
+### Setting Up a Reverb Bus
+
+```text
+"Load Fruity Reeverb 2 on mixer track 10, name it Reverb Bus, and send tracks 2 and 3 to it at -6 dB"
 ```
 
 ### Creating a Drum Pattern
